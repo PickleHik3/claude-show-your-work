@@ -17,6 +17,9 @@ import { track } from './telemetry'
 // (its store is kept), in a process of its own (see moveTo). Off with
 // SHOW_YOUR_WORK_AUTO_UPDATE=0 or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, and
 // never for an install pinned to a release tag.
+//
+// FORK: off by default. Nothing is fetched and no `claude plugin ...` command
+// (the channel move included) runs unless SHOW_YOUR_WORK_AUTO_UPDATE=1.
 const REPO = 'iamumeransari/claude-show-your-work'
 const MARKETPLACE = 'iamumeransari'
 export const PLUGIN = 'show-your-work'
@@ -66,7 +69,8 @@ function jsonOf<T>(text: string | undefined, fallback: T): T {
 
 export async function checkForUpdate($: EngineInterface, current: string, branch: Branch = BRANCHES.stable) {
   const off = await $.env.get('SHOW_YOUR_WORK_AUTO_UPDATE')
-  if (/^(0|false|off|no)$/i.test(off ?? '')) return
+  // FORK: explicit opt-in only.
+  if (!/^(1|true|on|yes)$/i.test(off ?? '')) return
   if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return
   const now = await $.clock.now()
   if (now - Number((await $.store.get('updateCheckedAt')) ?? 0) < DAY_MS) return

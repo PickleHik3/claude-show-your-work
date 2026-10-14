@@ -12,7 +12,7 @@ function engine(o: { latest?: string; installed?: string; source?: string; ref?:
   const toasts: string[] = []
   const store = new Map<string, unknown>(o.checkedAt ? [['updateCheckedAt', o.checkedAt]] : [])
   const $ = {
-    env: { get: async (name: string) => o.env?.[name] },
+    env: { get: async (name: string) => ({ SHOW_YOUR_WORK_AUTO_UPDATE: '1', ...o.env })[name] },
     clock: { now: async () => 10 * 24 * 60 * 60 * 1000 },
     store: { get: async (k: string) => store.get(k), set: async (k: string, v: unknown) => void store.set(k, v) },
     http: { fetch: async (url: string) => {
@@ -63,6 +63,12 @@ test('nothing is installed when GitHub has the same version', async () => {
 
 test('it checks at most once a day', async () => {
   const e = engine({ checkedAt: 10 * 24 * 60 * 60 * 1000 - 60_000 })
+  await checkForUpdate(e.$, '0.5.0')
+  expect(e.runs.length).toBe(0)
+})
+
+test('fork: nothing runs unless SHOW_YOUR_WORK_AUTO_UPDATE=1', async () => {
+  const e = engine({ env: { SHOW_YOUR_WORK_AUTO_UPDATE: '' } })
   await checkForUpdate(e.$, '0.5.0')
   expect(e.runs.length).toBe(0)
 })
