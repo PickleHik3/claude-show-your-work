@@ -18,6 +18,21 @@
 
 show-your-work (claude-show-your-work) is a Claude Code plugin that lets you view screenshots and videos in Claude Code, right in the terminal. It shows web pages, designs, charts, videos and recordings of your app being tested.
 
+## This fork
+
+A fork of [iamumeransari/claude-show-your-work](https://github.com/iamumeransari/claude-show-your-work) v0.6.3 (MIT), kept by PickleHik3 for an Android workflow.
+
+- Tool descriptions and the injected prompt point at the android-control skill's `ad` tool (`ad shot`, `ad zoom`, `ad frames`, `ad record`) instead of Playwright, and ask for before/after on device checks.
+- Telemetry is off unless `SHOW_YOUR_WORK_TELEMETRY=1`.
+- Auto-update is off unless `SHOW_YOUR_WORK_AUTO_UPDATE=1`.
+
+Install:
+
+```
+/plugin marketplace add https://github.com/PickleHik3/claude-show-your-work.git#v0.6.3-pk.1
+/plugin install show-your-work@picklehik3
+```
+
 ## Install
 
 Run these two commands in Claude Code:
