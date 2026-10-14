@@ -19,8 +19,10 @@ export async function flushDebug($: EngineInterface) {
 
 // Anonymous usage stats, sent to PostHog: what kind of thing happened and how
 // often, under a random id made once per install. Never a file name, path,
-// URL, title, prompt or anything typed. Off with SHOW_YOUR_WORK_TELEMETRY=0 or
-// DO_NOT_TRACK=1, and nothing is sent while POSTHOG_KEY is empty.
+// URL, title, prompt or anything typed. FORK: off by default. Nothing is sent
+// unless SHOW_YOUR_WORK_TELEMETRY=1 is set; DO_NOT_TRACK=1 and
+// CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC still win over the opt-in, and
+// nothing is sent while POSTHOG_KEY is empty.
 const POSTHOG_HOST = 'https://us.i.posthog.com'
 // The project API key: it can only add events, never read them, so it ships.
 const POSTHOG_KEY = 'phc_mLGFguVcH3Tei4txwqXFPU4xBgFDKThEZncahTv3LS3W'
@@ -57,6 +59,8 @@ export const isStatsBlocked = (optOut?: string, dnt?: string, quiet?: string) =>
 export async function startTelemetry($: EngineInterface, context: Props) {
   if (!POSTHOG_KEY || !isInstalledCopy($.plugin.root)) return
   const optOut = await $.env.get('SHOW_YOUR_WORK_TELEMETRY')
+  // FORK: explicit opt-in only.
+  if (!/^(1|true|on|yes)$/i.test(optOut ?? '')) return
   const dnt = await $.env.get('DO_NOT_TRACK')
   const quiet = await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
   if (isStatsBlocked(optOut, dnt, quiet)) return
