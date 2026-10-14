@@ -1,6 +1,6 @@
 {
   "name": "show-your-work",
-  "version": "0.6.3-pk.1",
+  "version": "0.6.3-pk.2",
   "description": "Claude shows its finished work right in the chat: screenshots, videos and synced before/after QA. Fork of iamumeransari/claude-show-your-work, retargeted at Android (ad tool), telemetry and auto-update off by default",
   "author": {
     "name": "Umer Ansari",

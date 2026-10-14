@@ -29,7 +29,7 @@ A fork of [iamumeransari/claude-show-your-work](https://github.com/iamumeransari
 Install:
 
 ```
-/plugin marketplace add https://github.com/PickleHik3/claude-show-your-work.git#v0.6.3-pk.1
+/plugin marketplace add https://github.com/PickleHik3/claude-show-your-work.git#v0.6.3-pk.2
 /plugin install show-your-work@picklehik3
 ```
 
