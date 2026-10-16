@@ -10,17 +10,17 @@ Things the Claude Code hooks loader and runtime enforce. Breaking one of the loa
 - `$` is always used as `$.noun.event(...)` at the call site; `on` is always `on("<event>", hook)`.
 - **The entry module can import sibling modules at runtime** (`import { x } from './layout'`), including modules whose functions take `$`. `hooks.json` lists only the entry module. The rules above apply in every module. An imported `let` is read-only to the importer, so state assigned from more than one module lives in one shared object.
 - **Past an import, `$` is followed only into a function declaration.** In any module but the entry one, a function that takes `$` is written `function name($, ...) { ... }`, never `const name = ($, ...) =>`, or the module doesn't load.
-- **An atom is read only where it is declared.** `read($, x)` and `update($, x, ...)` need `x` made by `atom(...)` in a const of the same file, so each file that reads or updates `welcome` declares it.
-- **A hook's filter is read from the entry module's own consts.** With `WELCOME` imported, `claude plugin validate` lists `on('ui.render', { requestId: WELCOME }, ...)` as `requestId=?`, so `register.tsx` spells the id itself.
+- **An atom is read only where it is declared.** `read($, x)` and `update($, x, ...)` need `x` made by `atom(...)` in a const of the same file, so each file that reads or updates an atom declares it.
+- **A hook's filter is read from the entry module's own consts.** With an id imported, `claude plugin validate` lists `on('ui.render', { requestId: ID }, ...)` as `requestId=?`, so `register.tsx` spells each id itself (`PANE`).
 
 ## Runtime behaviour
 
-- **A plugin's own `$.command.run` never reaches its own `command.run` hook.** To start the tour from code, call `startTour($)` directly, then run the command only to get a row in the chat. The `CommandOutput` render hook recognises the row by its args.
+- **A plugin's own `$.command.run` never reaches its own `command.run` hook.** Code that wants a command's effect calls the function behind it directly, and runs the command only to get a row in the chat. The `CommandOutput` render hook can recognise that row by its args.
 - **Command rows start with the plugin's name.** A `CommandOutput` row's `text` reads `show-your-work: <what the command returned>`, so its first line starts with `show-your-work:`, the same as the marker. Read markers from the **last** line (`markOf` uses `findLast`).
 - `CommandOutput` props: `command` (no slash, e.g. `img`), `args`, `text`, `isErrored`, `onScreen` (`null` when scrolled out of view).
-- **Hot reload (`/reload-plugins`) may not re-run `session.start`.** Anything a hook needs (temp folder, ffmpeg path, cell size, version gate) comes from `setUp($)`, which is memoised and called lazily from the tool call, `/img` and `/show-your-work`. Module state resets on reload.
+- **Hot reload (`/reload-plugins`) may not re-run `session.start`.** Anything a hook needs (temp folder, ffmpeg path, cell size, version gate) comes from `setUp($)`, which is memoised and called lazily from the tool call and `/img`. Module state resets on reload.
 - **Pane hooks size from `e.props.bodyColumns` and `e.props.bodyRows` (or `e.props.scroll.bodyRows`).** `e.viewport` is the whole screen. See `paneSize`.
-- **`Button` can hold `Text` children only on Claude Code 2.1.295+.** Older versions refuse the render. `canColourButtons` is set from `$.session.version()` in `setUp`.
+- **`Button` can hold `Text` children only on Claude Code 2.1.295+.** Older versions refuse the render. `canColourButtons` is set from `$.session.version()` in `setUp`; nothing uses it at the moment (the settings pane that did is gone), but a coloured switch would.
 - `$.process.run` takes `{ timeoutMs }`. A login shell (`sh -lc`) can hang on a slow profile: it gets 5 s, then a plain `sh -c`.
 - An `Image` source that equals the last one drawn is not sent again. That's why sources carry a `generation` (see `showing-images.md`).
-- A process that must outlive the session (the channel move) is started through `DETACH`: `perl -MPOSIX -e 'fork and exit; POSIX::setsid(); exec @ARGV'`.
+- A process that must outlive the session can be started with `perl -MPOSIX -e 'fork and exit; POSIX::setsid(); exec @ARGV'` (the old updater's `DETACH`).
