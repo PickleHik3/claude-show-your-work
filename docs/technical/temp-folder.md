@@ -2,7 +2,7 @@
 
 ## What's in it (`TMP`)
 
-- `$TMPDIR/claude-show-your-work-<uid>`, made with mode 700 (`PICK_TMP`). Holds converted pictures (anything not PNG), enlarged and shrunk copies, the copies sent as bytes over ssh (`b-<key>.png`), sharper copies (`w-<key>-<width>.png`) and the saved markers (`shown-<id>.json`).
+- `$TMPDIR/claude-show-your-work-<uid>`, made with mode 700 (`PICK_TMP`). Holds converted pictures (anything not PNG), enlarged and shrunk copies, the copies sent as bytes over ssh (`b-<key>.png`), sharper copies (`w-<key>-<width>.png`), data saver copies (`s-<key>-<width>.png`, with the emptied `.r.png` and `.q.png` it was made through), the saved markers (`shown-<id>.json`) and `send.log` (see `showing-images.md`).
 - Anything older than a week is deleted at session start (`CLEAN_SH`), without following links.
 - Claude is told (in the tool description) to save screenshots it makes only to show in a temp folder, not in the project.
 

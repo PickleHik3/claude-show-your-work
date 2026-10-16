@@ -24,10 +24,12 @@ Biome (`biome.json`), lint only: the formatter is off so diffs stay small. The r
 ## The test harness (`claude-code/testing`)
 
 - Every test loads the module, so a loader rule broken anywhere fails every test. That's the fastest way to catch the rules in `plugin-loader-and-hooks.md`.
-- Pure functions are exported and tested directly (`tests/fit.test.ts`, `tests/notices.test.ts`). Prefer pulling logic into a small exported function over driving it through hooks.
+- Pure functions are exported and tested directly (`tests/fit.test.ts`, `tests/notices.test.ts`, `tests/saver.test.ts`). Prefer pulling logic into a small exported function over driving it through hooks.
 - Render tests mount a component with `$.ui.mount(target)` and read `drawn()`. Press buttons with `mounted.press({ key })`.
 - **Hooks registered with `on(...)` in a test return `{ value }` or `{ deny }`.** Returning a bare object (like `{ deny: '...' }` meant as a result) turns into a rejection.
 - `mock.clock(on)` replaces `$.clock`; move it with `clock.advance(ms)`. Real timers don't advance it.
+- A mounted player's `$` has no store: a button that saves a setting can't be pressed through to the store. Test the saving with a stand-in `$` (`tests/saver.test.ts`).
+- The plugin a test mounts is its own copy of the modules: setting `state` from a test changes the test's copy, not what the mounted player reads.
 - `mock.store(on, entries)` answers `$.store`. **Atoms (`atom`, `read`, `update`) are not in the store** and can't be seeded, so the pane can't be rendered with content in a test.
 - `$.session.start` can't be driven usefully: the plugin's session hook doesn't run under the harness. Test what it decides through exported functions.
 - A byte source must be a real PNG; the harness checks the header.
@@ -36,9 +38,11 @@ Biome (`biome.json`), lint only: the formatter is off so diffs stay small. The r
 
 ## Shell scripts
 
-The `sh -c` scripts (`SHRINK_SH`, `CLEAN_SH`, `PICK_TMP`) are tested by hand in a temp folder, the way the plugin runs them: `sh -c "$SCRIPT" arg0 arg1 ...` (with `-c`, the first argument is `$0`). Use a folder with spaces in its name. For Linux behaviour on a Mac, put only `sh wc tr rm` on `PATH`.
+The `sh -c` scripts (`SHRINK_SH`, `SAVER_SH`, `LOG_SH`, `CLEAN_SH`, `PICK_TMP`) are tested by hand in a temp folder, the way the plugin runs them: `sh -c "$SCRIPT" arg0 arg1 ...` (with `-c`, the first argument is `$0`). Use a folder with spaces in its name. For Linux behaviour on a Mac, put only `sh wc tr rm` on `PATH`. For `SAVER_SH`'s fallbacks, a `PATH` folder of links to `sh wc tr mv magick convert` (no pngquant) or `sh wc tr mv` (ffmpeg only, by its full path). A big test picture: `magick -size 1080x2400 plasma: big.png` (noise: the worst case for bytes and time). Claude Code's own safety check refuses to run an `sh -c` script holding `rm` from the Bash tool, which is one more reason `SAVER_SH` has none.
 
 ## On screen
+
+**This fork is checked on the user's phone**, not in Ghostty: Claude Code over ssh from Termux on a Nothing Phone 2, inside the `herdr` multiplexer (a 59 × 39 pane), with `${TMP}/send.log` beside it for what was sent and how long each blit took. The Ghostty notes below are upstream's and still hold for a desktop check.
 
 The tests can't see whether a picture draws. Check visual changes in a normal Ghostty tab with the local copy:
 

@@ -5,7 +5,7 @@ A Claude Code plugin that draws pictures in the chat (Ghostty). It has one tool,
 - `register.tsx`: the entry module (the only one in `hooks.json`): the tool, the `/img` command and the hooks
 - `state.ts`: what more than one module reads or changes
 - `setup.ts`: temp folder, ffmpeg, ssh and the terminal, found at session start
-- `settings.ts`: remembered switches in the plugin's store (none yet)
+- `settings.ts`: remembered switches in the plugin's store (`dataSaver`), and `dataSaverOf`, which decides data saver from the env var, the switch and ssh
 - `layout.ts`: sizing, and fitting text to a width
 - `media.ts`: finding a file and preparing it as a PNG, and the notice when that fails
 - `marker.ts`: the shown item behind a result's marker

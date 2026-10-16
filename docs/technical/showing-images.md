@@ -17,6 +17,32 @@ The picture is an `Image` element. A picture already on screen can be swapped in
 - Every byte source goes through `pngSource`; that is the one place to change what crosses over ssh.
 - Do **not** switch to bytes automatically when a blit is denied with "cannot read files". That happens in background sessions too, where bytes don't draw either, and it left players stuck on their alt text.
 
+## Data saver
+
+For a slow link: this fork's user runs Claude Code over ssh (Tailscale, often relayed) from Termux on a phone, in a 59-column pane about 1080 px wide. A full-size PNG takes seconds to cross there.
+
+- **On or off** (`dataSaverOf` in `settings.ts`, read through `isDataSaver`): `SHOW_YOUR_WORK_LINK=slow` forces it on, `=fast` off. Otherwise the remembered `dataSaver` setting, otherwise on whenever pictures go as bytes (`sendBytes`, ssh). The link's speed is never measured.
+- **The copy** (`saverCopy`, `SAVER_SH` in `media.ts`), made in `prepare` beside the full picture (in parallel with its enlarging), so the render never waits for it: scaled to `saverWidth`, which is `SHOW_YOUR_WORK_PX` when set, else the cell's width times the terminal's columns when the cell is measured, else 1080 px. Never wider than the picture, and the full width even for a tall screenshot (chosen over fitting its height in the rows). Then 256 colours with `pngquant 256 --speed 3 --strip` (dithered), ImageMagick (`-dither FloydSteinberg -colors 256`, `PNG8:`) when pngquant is missing or fails, and the plain scaled PNG when both fail. A copy that isn't smaller than what it was made from is dropped; ImageMagick's dither made a flat screenshot three times bigger.
+- **Bytes:** about 150 KB is the goal, but width wins: nothing shrinks a copy below the pane's width to meet it. A flat app screenshot comes out around 10 KB; noise (`magick plasma:`) stays over 1 MB.
+- **Cached** as `s-<key of the original's path>-<width>.png` and made again only when the original is newer (`-nt`), so showing the same file again costs nothing. The script uses no `rm`: the files it works through are emptied and left for `CLEAN_SH`.
+- Sharpening (`sharpen`) skips a side with a data saver copy.
+- **The switch** changes pictures shown from then on, not ones already drawn. With the env var set, the button reads `Data saver: on (env)` and only says, in a toast, that the env var sets it: a `Button` has no disabled state (its props are key, label, hotkey, action, plain, dimColor, variant, role, autoFocus).
+- **Show full size / Show small** (`toggleFull`), on any picture drawn from a saver copy, swap the other copy into the same `Image` with `blit`. The full picture is read and sent on the first press, never before. The state is per site (`isFull`) and holds across Original/Updated.
+- **Each `Image` keeps the source it was drawn with** (`drawnAs`). The engine sends an `Image` again when its render source changes, even right after a blit sent that same picture; when the render source is unchanged, a blitted source stays and is the one re-sent on a resize. So the swap goes by blit and the redraw that relabels the button keeps the old render source: one send per press. A new box resets `drawnAs`, since the picture goes again anyway; so does a flip, since the other side is a new `Image`.
+- **Compare** sends only the side on screen: the player draws one `Image`, and the other side's bytes are read when it is flipped to, as the copy the site shows then. The first-draw `probe` blits the picture once more (the saver copy, when there is one).
+
+## The send log
+
+Every send appends one line to `${TMP}/send.log` (`sendLine`, `LOG_SH`): ISO time, site (the tool_use_id), `saver` or `full`, the pixels and bytes actually sent (read from the PNG), the milliseconds `$.ui.blit` took, and what sent it (`render`, `blit`, `probe`). A render's own send isn't timed (`-`) and is logged when the picture or its box is new to that `Image`, a best guess at when the engine transmits. A path source logs `file` for its bytes. The log is emptied once it passes 1 MB. Compare it with what the phone shows.
+
+```
+2026-10-16T10:15:02.120Z toolu_01Ab… saver 1080x2400 8619 - render
+2026-10-16T10:15:02.380Z toolu_01Ab… saver 1080x2400 8619 41 probe
+2026-10-16T10:15:09.904Z toolu_01Ab… full 1440x3200 52880 610 blit
+```
+
+The result's first line names the copy for Claude: `Shown: shot.png (1440×3200; data saver, 1080×2400, 9 KB).`
+
 ## Ghostty's limits
 
 - **Ghostty draws a picture at its native pixel size at most.** It scales a picture down to fit its box but never up. A 800 px picture in a wide box stays small. So pictures are made as wide as the box really is in pixels (`frameWidth`, 320 to 2400 px), enlarged with `sips --resampleWidth` (ffmpeg on Linux) up to that width and never past twice their own width; a sharper copy stops at `MAX_STILL` (3200).

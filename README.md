@@ -15,7 +15,7 @@ A fork of [iamumeransari/claude-show-your-work](https://github.com/iamumeransari
 Install:
 
 ```
-/plugin marketplace add https://github.com/PickleHik3/claude-show-your-work.git#v0.7.0-pk.1
+/plugin marketplace add https://github.com/PickleHik3/claude-show-your-work.git#v0.8.0-pk.1
 /plugin install show-your-work@picklehik3
 ```
 
@@ -36,7 +36,17 @@ Claude shows you its work in the chat whenever it builds or changes something vi
 - **What changed and QA:** the list of changes and up to three QA lines sit beside the picture when the chat is wide enough, under it otherwise.
 - **Quick functions:** open the page the picture shows (or the file itself), save it to Downloads, or copy its path.
 - **Over ssh:** pictures are sent as bytes, shrunk first when they're over Claude Code's 2 MiB limit.
+- **Data saver** (on by default over ssh): each picture is sent as a small copy, the pane's width and 256 colours, with a **Show full size** button that swaps the full picture in place. A **Data saver: on/off** button remembers your choice.
 - **When pictures can't draw** (tmux with passthrough off, an unsupported terminal, a background session), the player says why and how to fix it, and Claude is told the picture wasn't seen.
+
+### Data saver
+
+For a slow link, such as ssh from a phone. On whenever pictures are sent over ssh, unless you turn it off with the player's **Data saver** button (remembered across sessions). Environment variables override it:
+
+- `SHOW_YOUR_WORK_LINK=slow` forces it on, `SHOW_YOUR_WORK_LINK=fast` forces it off.
+- `SHOW_YOUR_WORK_PX=<width>` sets the width of the small copy. Otherwise it is the terminal's width in pixels when that can be measured, else 1080.
+
+The small copy uses `pngquant` when installed (`sudo apt install pngquant`), else ImageMagick. Every picture sent is logged to `send.log` in the plugin's temp folder (`$TMPDIR/claude-show-your-work-<uid>`), with its size and how long it took.
 
 <p align="center">
   <img src="docs/concepts.jpg" alt="Four landing page concepts for Tern shown in the chat" width="49%">
