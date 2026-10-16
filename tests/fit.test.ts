@@ -1,11 +1,10 @@
 import { expect, test } from 'claude-code/testing'
 
-import { wrapWords, pagesOf, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, sizeFor, tabLabel } from '../hooks/layout'
-import { isInstalledCopy } from '../hooks/telemetry'
+import { wrapWords, pagesOf, fit, cellOf, frameWidth, paneSize, layoutOf, targetBox, drawBox, pixelsFor, tabLabel } from '../hooks/layout'
 import { isAtLeast } from '../hooks/setup'
-import { anchors, mapTime, align, matchOf, expand, frameFile, pairHeightOf, sameMoment, sampleRate, strideFor, spreadMatch, leadFrom, shiftTimes, keyOf, looseName, pngDims } from '../hooks/media'
-import { parseShown, timesThatMean, versionsOf, noteOf, handleOf } from '../hooks/history'
-import { liveChange, inClipOrder, barChunks, changeAt, qaTotals, checkDiff, resultWords, resumeCommand, isScratch, toolLine, urlAt, playWord } from '../hooks/player'
+import { expand, keyOf, looseName, pngDims } from '../hooks/media'
+import { parseShown } from '../hooks/marker'
+import { qaTotals, resumeCommand, isScratch, toolLine } from '../hooks/player'
 
 test('a wide image fills the width at half-height rows', () => {
   expect(fit(1920, 1080, 100, 40)).toEqual({ columns: 100, rows: 29 })
@@ -36,77 +35,17 @@ test('typed and dragged-in paths resolve', () => {
   expect(expand('img/a.png', '/w/', '/Users/u')).toBe('/w/img/a.png')
 })
 
-test('long clips are sampled slower so they stay under 900 frames', () => {
-  expect(sampleRate(10)).toBe(12)
-  expect(sampleRate(150)).toBe(6)
-  expect(sampleRate(5000)).toBe(1)
-  expect(frameFile({ dir: '/t', count: 3, fps: 12, duration: 1 }, 0)).toBe('/t/f00001.png')
-})
-
-test('the picture sizes to the terminal within its limits', () => {
-  const wide = sizeFor(1920, 1080, 192, 60, false)
-  expect(wide.columns).toBeLessThanOrEqual(120)
-  expect(wide.rows).toBeLessThanOrEqual(33)
-  const narrow = sizeFor(1920, 1080, 40, 40, false)
-  expect(narrow.columns).toBe(40)
-  const tiny = sizeFor(1920, 1080, 12, 40, false)
-  expect(tiny.columns).toBeGreaterThan(0)
-  expect(sizeFor(1920, 1080, 294, 30, true).rows).toBeLessThanOrEqual(18)
-})
-
-test('compare keeps the same moment across clips', () => {
-  const a = { dir: '/a', count: 200, fps: 12, duration: 16.7 }
-  const b = { dir: '/b', count: 60, fps: 6, duration: 10 }
-  expect(sameMoment(a, b, 60)).toBe(30)
-  expect(sameMoment(a, b, 199)).toBe(59)
-})
-
-test('the play control says where the clip is', () => {
-  expect(playWord(false, 0, 100)).toBe('▶ Play')
-  expect(playWord(false, 40, 100)).toBe('▶ Resume')
-  expect(playWord(true, 40, 100)).toBe('❚❚ Pause')
-  expect(playWord(false, 99, 100)).toBe('↺ Replay')
-})
-
-test('the report says which checks were fixed or broke', () => {
-  const before = [{ name: 'a', ok: false }, { name: 'b', ok: true }, { name: 'c', ok: true }]
-  const now = [{ name: 'a', ok: true }, { name: 'b', ok: false }, { name: 'c', ok: true }]
-  const { fixed, broken } = checkDiff(now, before)
-  expect(fixed.map(c => c.name)).toEqual(['a'])
-  expect(broken.map(c => c.name)).toEqual(['b'])
-})
-
-test('side by side names the latest change up to the moment shown', () => {
-  const shown = {
-    path: '/a', width: 1, height: 1, title: 't', generation: 1,
-    checks: [{ name: 'nav', ok: true, at: 6 }, { name: 'hero', ok: true, at: 8 }, { name: 'footer', ok: true, at: 11 }],
-    compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'nav', ok: true }, { name: 'hero', ok: false }, { name: 'footer', ok: false }] },
-  }
-  expect(changeAt(shown, 5)).toBe(null)
-  expect(changeAt(shown, 9)?.check.name).toBe('hero')
-  expect(changeAt(shown, 12)?.check.name).toBe('footer')
-  expect(changeAt(shown, 12)?.was).toBe(false)
-})
-
 test('temp files are scratch, finished work is not', () => {
   expect(isScratch('/tmp/claude-show-your-work/a.png')).toBe(true)
-  expect(isScratch('/private/tmp/claude-501/x/qa.webm')).toBe(true)
+  expect(isScratch('/private/tmp/claude-501/x/qa.png')).toBe(true)
   expect(isScratch('/var/folders/rq/x/T/shot.png')).toBe(true)
-  expect(isScratch('/Users/u/Movies/launch.mp4')).toBe(false)
+  expect(isScratch('/Users/u/Pictures/launch.png')).toBe(false)
 })
 
 test('the call row is one short line', () => {
-  const line = toolLine('mcp__show-your-work__show_video', { path: '/tmp/x/qa.webm', title: 'Agent QA', compare: '/tmp/b.webm', compare_label: 'Live', checks: [1, 2, 3] }, false)
-  expect(line).toBe('▶ Video · Agent QA · vs Live · 3 checks')
-  expect(toolLine('mcp__show-your-work__show_image', { path: '/a/b/shot.png' }, true)).toBe('▣ Loading image · shot.png')
-})
-
-test('open page follows the latest check with a url', () => {
-  const shown = { path: '/a', width: 1, height: 1, title: 't', generation: 1, url: 'http://localhost:3000/',
-    checks: [{ name: 'a', ok: true, at: 2, url: 'http://localhost:3000/#slide-07' }, { name: 'b', ok: true, at: 6, url: 'http://localhost:3000/#slide-10' }] }
-  expect(urlAt(shown, 1)).toBe('http://localhost:3000/')
-  expect(urlAt(shown, 3)).toBe('http://localhost:3000/#slide-07')
-  expect(urlAt(shown, 9)).toBe('http://localhost:3000/#slide-10')
+  const line = toolLine({ path: '/tmp/x/after.png', title: 'Pricing', compare: '/tmp/before.png', compare_label: 'Live' }, false)
+  expect(line).toBe('▣ Image · Pricing · vs Live')
+  expect(toolLine({ path: '/a/b/shot.png' }, true)).toBe('▣ Loading image · shot.png')
 })
 
 test('the resume command names this session', () => {
@@ -114,57 +53,10 @@ test('the resume command names this session', () => {
   expect(resumeCommand('')).toBe('CLAUDE_CODE_DISABLE_AGENT_VIEW=1 claude --resume')
 })
 
-test('check results read as words', () => {
-  expect(resultWords([{ name: 'a', ok: true }, { name: 'b', ok: false }, { name: 'c', ok: false }])).toBe('2 checks fail')
-  expect(resultWords([{ name: 'a', ok: false }])).toBe('1 check fails')
-  expect(resultWords([{ name: 'a', ok: true }, { name: 'b', ok: true }])).toBe('all 2 checks pass')
-  expect(resultWords([])).toBe('')
-})
-
-
-test('the bar is a few wide buttons that still cover every cell', () => {
-  const chunks = barChunks(70, 20)
-  expect(chunks.length).toBeLessThanOrEqual(20)
-  expect(chunks.map(c => c.label).join('').length).toBe(70)
-  expect(chunks.map(c => c.label).join('')[20]).toBe('●')
-  expect(chunks[0]!.isAhead).toBe(false)
-  expect(chunks.at(-1)!.isAhead).toBe(true)
-})
-
-test('both runs line up on the steps they share', () => {
-  const updated = [{ name: 'nav', ok: true, at: 6.2 }, { name: 'hero', ok: true, at: 7.9 }, { name: 'end', ok: true, at: 14.6 }]
-  const original = [{ name: 'nav', ok: true, at: 5.9 }, { name: 'hero', ok: false, at: 7.5 }, { name: 'end', ok: true, at: 14.3 }]
-  const pts = anchors(updated, original)
-  expect(pts.length).toBe(3)
-  expect(Math.abs(mapTime(pts, 7.9, 18.9, 18.5) - 7.5) < 0.01).toBe(true)
-})
-
-test('runs line up by how their frames look, even where one waits longer', () => {
-  // the original holds its 3rd frame three times as long (a slower load)
-  const frame = (v: number) => Array(8).fill(v)
-  const updated = [0, 40, 80, 120, 160, 200].map(frame)
-  const original = [0, 40, 80, 80, 80, 120, 160, 200].map(frame)
-  const match = matchOf(align(updated, original), updated.length)
-  expect(match).toEqual([0, 1, 4, 5, 6, 7])
-})
-
-test('a screen only one run shows can not pull the other out of time', () => {
-  // the same steps at the same pace; the fixed run then shows a message the
-  // broken one never does, for its last third
-  const frame = (v: number) => Array(8).fill(v)
-  const fixed = Array.from({ length: 30 }, (_, i) => frame(i < 20 ? i * 5 : 250))
-  const broken = Array.from({ length: 30 }, (_, i) => frame(i < 20 ? i * 5 : 95))
-  const match = matchOf(align(fixed, broken, 0.01, 3, 0.02), fixed.length)
-  match.forEach((j, i) => expect(Math.abs(j - i)).toBeLessThanOrEqual(3))
-  expect(match.at(-1)).toBe(29)
-})
-
 test('the QA line totals the summary', () => {
   expect(qaTotals([{ label: 'a', ok: true, passed: 4, total: 4 }, { label: 'b', ok: false, passed: 1, total: 3 }])).toEqual({ passed: 5, total: 7 })
-  expect(qaTotals([], [{ name: 'x', ok: true }, { name: 'y', ok: false }])).toEqual({ passed: 1, total: 2 })
   // Plain summary lines (label and tick, no numbers) count one each, so the QA card shows.
   expect(qaTotals([{ label: 'a', ok: true }, { label: 'b', ok: true }, { label: 'c', ok: false }])).toEqual({ passed: 2, total: 3 })
-  expect(qaTotals([{ label: 'a', ok: true }], [{ name: 'x', ok: true }, { name: 'y', ok: false }])).toEqual({ passed: 1, total: 2 })
   expect(qaTotals()).toEqual({ passed: 0, total: 0 })
 })
 
@@ -181,88 +73,20 @@ test('changes page by rows and an item never splits', () => {
 })
 
 
-test('changes list in clip order, untimed ones last', () => {
-  const out = inClipOrder([{ title: 'focus', at: 14 }, { title: 'note' }, { title: 'hover', at: 9 }, { title: 'cards', at: 7 }])
-  expect(out.map(c => c.title)).toEqual(['cards', 'hover', 'focus', 'note'])
-})
-
 test('wrapping never hangs on a tiny width', () => {
   expect(wrapWords('Stats moved inside', 0).length).toBeGreaterThan(0)
   expect(wrapWords('Stats moved inside', -7).join('')).toBe('Statsmovedinside')
 })
 
-test('a change lights when a seek lands just before it', () => {
-  const changes = [{ title: 'a', at: 0.5 }, { title: 'b', at: 1.04 }]
-  expect(liveChange(changes, 12 / 12, 12)).toBe(1)
-  expect(liveChange(changes, 0.2, 12)).toBe(-1)
-})
-
-test('checks without a time never claim 0:00', () => {
-  const shown = { path: '/a', width: 1, height: 1, title: 'a', generation: 1, checks: [{ name: 'x', ok: true }], compare: { path: '/b', width: 1, height: 1, title: 'b', generation: 2, checks: [{ name: 'x', ok: false }] } }
-  expect(changeAt(shown, 5)).toBe(null)
-})
-
-test('times only stay when they point somewhere', () => {
-  const same = [{ title: 'a', at: 3 }, { title: 'b', at: 3 }]
-  expect(timesThatMean(same, true)!.every(c => c.at === undefined)).toBe(true)
-  expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], true)!.map(c => c.at)).toEqual([1, 4])
-  expect(timesThatMean([{ title: 'a', at: 1 }, { title: 'b', at: 4 }], false)!.every(c => c.at === undefined)).toBe(true)
-  expect(timesThatMean([{ title: 'a', at: 2 }], true)![0]?.at).toBe(2)
-  expect(timesThatMean(undefined, true)).toBeUndefined()
-})
-
-test('earlier versions arrive as paths, notes, or JSON text', () => {
-  expect(versionsOf(['/a', { path: '/b', note: 'cloud photo' }])).toEqual([{ path: '/a' }, { path: '/b', note: 'cloud photo' }])
-  expect(versionsOf('["/a"]')).toEqual([{ path: '/a' }])
-  expect(versionsOf('/a')).toEqual([{ path: '/a' }])
-  expect(versionsOf(undefined)).toEqual([])
-  expect(noteOf([{ title: 'Centred play' }, { title: 'Cleaner card' }], undefined, 'Hero')).toBe('Centred play and 1 more')
-  expect(noteOf(undefined, undefined, 'Hero')).toBe('Hero')
-})
-
-test('long clips are matched on sampled frames, then spread back', () => {
-  expect(strideFor(100, 120)).toBe(1)
-  expect(strideFor(482, 480)).toBe(3)
-  expect(spreadMatch([0, 1, 1], 2, 6, 10)).toEqual([0, 1, 2, 3, 2, 3])
-  expect(spreadMatch([0, 5], 3, 6, 12)).toEqual([0, 1, 2, 12, 12, 12])
-})
-
-test('matching two long clips stays quick', () => {
-  const clip = (seed: number) => Array.from({ length: 240 }, (_, i) => Array.from({ length: 576 }, (_, k) => (i * 7 + k * seed) % 256))
-  const started = Date.now()
-  const path = align(clip(3), clip(5))
-  const took = Date.now() - started
-  expect(path.length).toBeGreaterThan(239)
-  expect(took).toBeLessThan(4000)
-})
-
-test('a blank opening of any flat tone is found, and the times move with it', () => {
-  const frame = (t: number, lo: number, hi: number) => `frame:0 pts:0 pts_time:${t}\nlavfi.signalstats.YLOW=${lo}\nlavfi.signalstats.YHIGH=${hi}\n`
-  // off-white, then a light grey with a spinner, then the page
-  const log = frame(0, 240, 246) + frame(0.1, 228, 236) + frame(0.2, 228, 239) + frame(0.3, 40, 230)
-  expect(leadFrom(log, 12)).toBe(0.3)
-  expect(leadFrom(frame(0, 30, 200), 12)).toBe(0)
-  expect(leadFrom(frame(0, 250, 252) + frame(0.1, 251, 252), 12)).toBe(0)
-  expect(leadFrom('', 12)).toBe(0)
-  expect(shiftTimes([{ title: 'a', at: 2 }, { title: 'b' }, { title: 'c', at: 0.3 }], 0.64)).toEqual([{ title: 'a', at: 1.36 }, { title: 'b' }, { title: 'c', at: 0 }])
-})
-
-test('a file version keys one frames folder', () => {
-  expect(keyOf('/a.mp4|10|1')).toBe(keyOf('/a.mp4|10|1'))
-  expect(keyOf('/a.mp4|10|1')).not.toBe(keyOf('/a.mp4|10|2'))
-  expect(keyOf('/a.mp4|10|1')).toMatch(/^[0-9a-f]+$/)
+test('a key is the same for the same text, and hex', () => {
+  expect(keyOf('/a.png|10|1')).toBe(keyOf('/a.png|10|1'))
+  expect(keyOf('/a.png|10|1')).not.toBe(keyOf('/a.png|10|2'))
+  expect(keyOf('/a.png|10|1')).toMatch(/^[0-9a-f]+$/)
 })
 
 test('long tab names are shortened so every tab fits', () => {
   expect(tabLabel('Original')).toBe('Original')
   expect(tabLabel('Before (blurred photo background)')).toBe('Before (blu…')
-})
-
-test('a handle is read from #id or id', () => {
-  expect(handleOf('#7F3A')).toBe('7f3a')
-  expect(handleOf(' 7f3a ')).toBe('7f3a')
-  expect(handleOf('')).toBeUndefined()
-  expect(handleOf(undefined)).toBeUndefined()
 })
 
 test('a typed screenshot name matches the narrow-space one macOS writes', () => {
@@ -300,14 +124,14 @@ test('the cell size comes from the tty size, and is unknown without pixels', () 
   expect(cellOf('')).toBe(null)
 })
 
-test('video frames are cut as wide as the window shows them, up to 2400 px', () => {
+test('pictures are made as wide as the window shows them, up to 2400 px', () => {
   // A full Retina window: 157 by 39 cells of 32.1 by 68.5 screen pixels.
   const term = { columns: 157, rows: 39 }, px = { width: 32.1, height: 68.5 }
   expect(frameWidth(1600, 800, term, px)).toBe(2400)
   const tall = frameWidth(1600, 1000, term, px)
   expect(tall).toBeGreaterThan(1600)
   expect(tall).toBeLessThan(2400)
-  // Half a window: narrower than 1600, so the frames are smaller too.
+  // Half a window: narrower than 1600, so the picture is smaller too.
   expect(frameWidth(1600, 800, { columns: 78, rows: 39 }, px)).toBeLessThan(1600 * 1.5)
   // Nothing measured: 1600 at most, as before.
   expect(frameWidth(3000, 1500, null, null)).toBe(1600)
@@ -323,12 +147,6 @@ test('versions compare by number, not by text', () => {
   expect(isAtLeast('2.1.296-dev', '2.1.295')).toBe(true)
 })
 
-test('only an installed copy sends usage data, never one loaded from a folder', () => {
-  expect(isInstalledCopy('/Users/a/.claude/plugins/cache/iamumeransari/show-your-work/0.6.0')).toBe(true)
-  expect(isInstalledCopy('/Users/a/claude-mods/claude-show-your-work')).toBe(false)
-  expect(isInstalledCopy('/Users/a/Client Sites/show-your-work')).toBe(false)
-})
-
 test('a docked pane sizes to its own width, not the whole screen', () => {
   expect(paneSize({ columns: 267, rows: 60 }, { bodyColumns: 45 })).toEqual({ columns: 45, rows: 60 })
   // A pane docked under the chat is short: the picture fits its height too.
@@ -336,14 +154,6 @@ test('a docked pane sizes to its own width, not the whole screen', () => {
   expect(paneSize({ columns: 160, rows: 60 }, { bodyColumns: 150, bodyRows: 14 })).toEqual({ columns: 150, rows: 14 })
   expect(paneSize({ columns: 120, rows: 40 }, {})).toEqual({ columns: 120, rows: 40 })
   expect(paneSize(undefined, { bodyColumns: 45 })).toBe(undefined)
-  // The narrower width gives a smaller picture.
-  expect(sizeFor(480, 240, 45 - 6, 60, true).columns).toBeLessThanOrEqual(39)
-})
-
-test('side by side is cut tall enough to fill the window, never taller than its sides', () => {
-  expect(pairHeightOf({ height: 1000 }, { height: 1000 })).toBe(720)
-  expect(pairHeightOf({ height: 1080 }, { height: 541 })).toBe(540)
-  expect(pairHeightOf({ height: 0 }, { height: 0 })).toBe(720)
 })
 
 // Retina cell: 9×18 points, 2 pixels a point.

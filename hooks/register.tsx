@@ -1,55 +1,36 @@
-// The entry module: the tools and commands, and the hooks that tie the
+// The entry module: the tool and the command, and the hooks that tie the
 // modules together.
 import { atom, read } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Check, KeyChange, Overlay, Shown, Summary } from '../types'
+import type { KeyChange, Shown, Summary } from '../types'
 
 import { state } from './state'
-import { clock, paneSize } from './layout'
+import { paneSize } from './layout'
 import type { PaneProps } from './layout'
-import { flush, flushDebug, track } from './telemetry'
 import { setUp } from './setup'
-import { CLEAN_SH, exists, expand, findPasted, identityOf, keyOf, locate, NO_FFMPEG, noticeOf, prepare, preparePair, REASONS, shiftTimes, trimFrames, VIDEO } from './media'
+import { loadSettings } from './settings'
+import { CLEAN_SH, expand, findPasted, keyOf, locate, NO_FFMPEG, noticeOf, prepare } from './media'
 import type { Notice } from './media'
-import { handleOf, MARK, noteOf, preparedOf, remember, shownById, shownOf, storeOf, storeVersion, textOf, timesThatMean, versionsOf } from './history'
-import { hadVersionBefore06, PLUGIN } from './updater'
-import { atStep, cantDraw, draw, freshCalls, NoticeBox, player, sideOf, stop, toolLine, versions, Viewer } from './player'
+import { MARK, markOf, shownById, shownOf, textOf } from './marker'
+import { cantDraw, draw, NoticeBox, player, sideOf, toolLine, versions, Viewer } from './player'
 import type { Ui } from './player'
-import { goToStop, loadSettings, Opening, openSettings, openWelcome, Settings, startBackground, startTour, Tour, TOUR_TEXT, WELCOME_TEXT } from './onboarding'
 
 const PANE = 'show-your-work'
-// The tools, and their names from before the rename, so old windows still draw.
-const TOOLS = ['show_image', 'show_video'].map(t => `mcp__show-your-work__${t}`)
-// Screenshots and recordings made only to be shown go to the temp folder, so
-// they don't pile up in the project; the history keeps its own copy.
-const SCRATCH_NOTE = 'Save screenshots and recordings you make to show here in a temporary folder, such as $TMPDIR or /tmp, not in the project. Save them in the project only when the user asks to keep them, or when the project already has a folder for them, such as one for test screenshots.'
-// What can be shown at all: anything else is refused before it is copied.
-const MEDIA = /\.(png|jpe?g|webp|gif|tiff?|heic|heif|bmp|avif|mp4|mov|m4v|webm|mkv|avi)$/i
-// The settings pane. A hook's filter is read from a const in this file, so its
-// id is spelled here as well as in onboarding.tsx.
-const WELCOME = 'show-your-work-welcome'
+const TOOLS = ['mcp__show-your-work__show_image']
+// Screenshots made only to be shown go to the temp folder, so they don't pile
+// up in the project.
+const SCRATCH_NOTE = 'Save screenshots you make to show here in a temporary folder, such as $TMPDIR or /tmp, not in the project. Save them in the project only when the user asks to keep them, or when the project already has a folder for them, such as one for test screenshots.'
+// What can be shown at all: anything else is refused before it is read.
+const IMAGE = /\.(png|jpe?g|webp|gif|tiff?|heic|heif|bmp|avif)$/i
 const current = atom({ plugin: 'show-your-work', key: 'current' } as const, null)
-// The settings pane's and the tour's redraws. Declared in each file that
-// reads or updates it: the engine only reads an atom declared in the same file.
-const welcome = atom({ plugin: 'show-your-work', key: 'welcome' } as const, 0)
 let pastedNames: string[] = []
 // Each failed show's notice, by tool call, for the box drawn in its place.
 const notices = new Map<string, Notice>()
 // Each window's last drawing, handed back while nothing it shows changed.
 const drawn = new Map<string, { key: string; tree: unknown }>()
 
-const CHECKS = {
-  type: 'array',
-  description: 'Checks run: { name, ok, at? (seconds), url? }',
-  items: {
-    type: 'object',
-    properties: { name: { type: 'string' }, ok: { type: 'boolean' }, at: { type: 'number' }, url: { type: 'string' } },
-    required: ['name', 'ok'],
-  },
-}
-
-const TOOL_INPUT = {
+const IMAGE_INPUT = {
   type: 'object',
   properties: {
     path: { type: 'string', description: 'Absolute path' },
@@ -58,30 +39,19 @@ const TOOL_INPUT = {
     url: { type: 'string', description: 'The page shown; adds Open page' },
     changes: {
       type: 'array',
-      description: 'What changed: { title, detail?, at? (seconds), url? }, in clip order',
-      items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, at: { type: 'number' }, url: { type: 'string' } }, required: ['title'] },
+      description: 'What changed: { title, detail?, url? }',
+      items: { type: 'object', properties: { title: { type: 'string' }, detail: { type: 'string' }, url: { type: 'string' } }, required: ['title'] },
     },
     summary: {
       type: 'array',
       description: 'QA in up to 3 lines: { label, ok, passed?, total? }',
       items: { type: 'object', properties: { label: { type: 'string' }, ok: { type: 'boolean' }, passed: { type: 'number' }, total: { type: 'number' } }, required: ['label', 'ok'] },
     },
-    checks: CHECKS,
     compare: { type: 'string', description: 'Path to the before version' },
-    compare_checks: { ...CHECKS, description: 'The same checks on the before side' },
-    changes_title: { type: 'string', description: 'Heading for the changes list when not "What changed", e.g. "Video structure"' },
-    previous: { type: 'string', description: '#id of the version this revises' },
-    versions: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, note: { type: 'string' } }, required: ['path'] }, description: 'Earlier unshown versions of this work, oldest first: { path, note }' },
     label: { type: 'string', description: 'Name for this side if the user asks (default "Updated")' },
     compare_label: { type: 'string', description: 'Name for the before side if the user asks (default "Original")' },
   },
   required: ['path'],
-}
-
-// A picture needs no timed checks, play button or custom list heading.
-const IMAGE_INPUT = {
-  ...TOOL_INPUT,
-  properties: Object.fromEntries(Object.entries(TOOL_INPUT.properties).filter(([k]) => !['checks', 'compare_checks', 'changes_title'].includes(k))),
 }
 
 export const register: Register = on => {
@@ -91,18 +61,12 @@ export const register: Register = on => {
     state.setup = null
     await setUp($)
     state.sessionId = await $.session.id().catch(() => '')
-    state.hasVideoTools = false
     await loadSettings($)
     void (async () => {
-      const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: string }
-      state.pluginVersion = manifest.version ?? '0.0.0'
       const program = (await $.env.get('TERM_PROGRAM')) ?? ''
       const term = (await $.env.get('TERM')) ?? ''
-      const terminal = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
-      state.terminalName = terminal
+      state.terminalName = /ghostty/i.test(program + term) ? 'ghostty' : /kitty/i.test(term) ? 'kitty' : program.toLowerCase() || 'other'
       state.inTmux = !!(await $.env.get('TMUX')) || /^tmux/i.test(term)
-      state.isDebug = /^(1|true|on|yes)$/i.test((await $.env.get('SHOW_YOUR_WORK_DEBUG')) ?? '')
-      if (state.isDebug) $.clock.every(1000, () => void flushDebug($))
       // tmux with passthrough off never lets a picture through: known before the first one.
       if (state.inTmux) {
         const pass = await $.process.run(['tmux', 'show', '-gv', 'allow-passthrough']).catch(() => null)
@@ -112,57 +76,19 @@ export const register: Register = on => {
           state.drawCause = 'tmux'
         }
       }
-      state.statsContext = {
-        plugin_version: state.pluginVersion,
-        claude_code_version: (await $.session.version().catch(() => ({ base: '' }))).base ?? '',
-        terminal,
-        has_ffmpeg: await exists($, state.ffmpeg),
-        os: state.isMac ? 'macos' : 'linux',
-      }
-      // Every install sees the welcome and tour once, an update included:
-      // installs from before 0.6.2 never had one. 0.6.0 stored 'welcomed' both
-      // when it showed the welcome and when it skipped it for an update; an
-      // older version's folder still beside this one marks the update.
-      state.isWelcomed = !!(await $.store.get('toured'))
-      if (!state.isWelcomed && await $.store.get('welcomed')) {
-        const versions = await $.fs.list($.plugin.root.replace(/\/+$/, '').replace(/\/[^/]+$/, '')).catch(() => [])
-        if (!hadVersionBefore06(versions.map(f => f.name))) {
-          state.isWelcomed = true
-          await $.store.set('toured', true)
-        }
-      }
-      // An update keeps what it already ran: its updates and usage counts start
-      // now, and only a fresh install waits for the welcome.
-      const isUpdate = (await Promise.all(['welcomed', 'installId', 'updateCheckedAt'].map(key => $.store.get(key)))).some(value => value !== undefined && value !== null)
-      if (!state.isWelcomed && isUpdate) await startBackground($)
-      if (state.isWelcomed) await startBackground($)
-      else await openWelcome($)
     })().catch(() => undefined)
-    // Frames and converted pictures a week old go; a window that scrolls back
-    // into view cuts its frames again from the source.
-    void $.process.run(['sh', '-c', CLEAN_SH, state.TMP]).then(() => trimFrames($))
-    await $.command.register({
-      name: 'show-your-work',
-      description: 'Settings for show-your-work, or the tour: /show-your-work tour',
-      argumentHint: '[tour]',
-    })
+    // Converted pictures and saved markers a week old go.
+    void $.process.run(['sh', '-c', CLEAN_SH, state.TMP]).catch(() => undefined)
     await $.command.register({
       name: 'img',
-      description: 'Show an image or video in the chat: /img <path>',
+      description: 'Show an image in the chat: /img <path>',
       argumentHint: '<path>',
     })
     await $.tool.register({
       name: 'show_image',
       description:
-        `Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\nUse it without being asked when a change is visual, before you call it done. On Android, take the picture with the android-control skill's \`ad\` tool: \`ad shot\` (screen), \`ad zoom\` (element crop), \`ad frames\` (frame sequence). For a website or web app, screenshot the page or component with headless Playwright. Don't ask the user to open a file or URL. Don't use it when nothing visual changed.\n\nWhen the image shows work you changed, pass \`changes\` (a few words each) and \`compare\` (the same view on the old build), so the user can switch between Original, Updated and Compare. For device checks, show the before and after of each check (use show_video when you need \`checks\` from the verdicts). Pass \`summary\` only for checks you ran. If a device-check report page exists (HTML under ~/reports, served over Tailscale), pass its URL as \`url\`. For a new version of something shown earlier, pass \`previous\` with its #id.\n\nThe image goes to the user's screen, not to you.\n\n${SCRATCH_NOTE}`,
+        `Shows an image file to the user, inline in their terminal. Accepts PNG, JPEG, WebP, GIF and TIFF.\n\nUse it without being asked when a change is visual, before you call it done. On Android, take the picture with the android-control skill's \`ad\` tool: \`ad shot\` (screen), \`ad zoom\` (element crop). For a website or web app, screenshot the page or component with headless Playwright. Don't ask the user to open a file or URL. Don't use it when nothing visual changed.\n\nWhen the image shows work you changed, pass \`changes\` (a few words each) and \`compare\` (the same view on the old build), so the user can switch between Original and Updated. For device checks, show the before and after of each check. Pass \`summary\` only for checks you ran. If a device-check report page exists (HTML under ~/reports, served over Tailscale), pass its URL as \`url\`.\n\nThe image goes to the user's screen, not to you.\n\n${SCRATCH_NOTE}`,
       inputSchema: IMAGE_INPUT,
-      isDeferred: false,
-    })
-    await $.tool.register({
-      name: 'show_video',
-      description:
-        `Plays a video file to the user, inline in their terminal, in a player that starts on its own. Accepts MP4, MOV, WebM and GIF.\n\nUse it without being asked for interactive or animated changes, before you call them done. On Android, record with \`ad record SECONDS out.mp4\` (android-control skill; Android caps it at 180 s). For a website or web app, record a headless Playwright run that clicks through the change (\`recordVideo\`). The player shows at most 900 frames, about 75 s at 12 fps, so keep clips short.\n\nWhen the video shows work you changed, pass \`changes\`, each with \`at\` (the second it appears), and \`checks\` for what you tested, also with \`at\`. For a fix, record the same steps on the old build and the new one, and pass the old file as \`compare\` with its own \`compare_checks\`; the two play side by side, in sync. For device checks, show the before and after of each check and pass \`checks\` from the verdicts. Pass \`summary\` only for checks you ran. If a device-check report page exists (HTML under ~/reports, served over Tailscale), pass its URL as \`url\`. For a new version of something shown earlier, pass \`previous\` with its #id. You do not see the video.\n\n${SCRATCH_NOTE}`,
-      inputSchema: TOOL_INPUT,
       isDeferred: false,
     })
 
@@ -179,28 +105,20 @@ export const register: Register = on => {
       return {
         sections: [...composed.sections, {
           id: 'show-your-work:show-visual-work', scope: 'session',
-          text: "This terminal shows pictures and videos inline. When a change is visual, show it with show_image or show_video before you say it's done (Android: `ad shot`, `ad zoom`, `ad frames`, `ad record`; web: a headless Playwright screenshot or recording). For a fix or a device check, show before and after, the old build or page as compare.",
+          text: "This terminal shows pictures inline. When a change is visual, show it with show_image before you say it's done (Android: `ad shot`, `ad zoom`; web: a headless Playwright screenshot). For a fix or a device check, show before and after, the old build or page as compare.",
         }],
       }
     }
-    const why = cantDraw(state.drawCause, 'it', 'picture', state.sessionId).claude.replace(/, so the person saw a notice instead of it\./, '.')
+    const why = cantDraw(state.drawCause, 'it', state.sessionId).claude.replace(/, so the person saw a notice instead of it\./, '.')
     return {
       sections: [...composed.sections, {
         id: 'show-your-work:cannot-draw', scope: 'session',
-        text: `show-your-work: pictures and videos can't draw in this session (${why}) Anything shown with show_image or show_video was not seen: the person saw a notice instead. Don't say they saw it.`,
+        text: `show-your-work: pictures can't draw in this session (${why}) Anything shown with show_image was not seen: the person saw a notice instead. Don't say they saw it.`,
       }],
     }
   })
 
-  on('session.end', async ($, e, next) => {
-    await flush($).catch(() => undefined)
-
-    return next(e)
-  })
-
   on('prompt.submit', ($, e, next) => {
-    // Sending a message puts the settings away.
-    if (e.origin?.kind !== 'plugin') void $.ui.panes().then(panes => { if (panes.some(p => p.id === WELCOME)) return $.ui.close({ id: WELCOME }) }).catch(() => undefined)
     pastedNames = (e.attachments ?? []).filter(a => a.type === 'image' && a.filename).map(a => a.filename!)
 
     return next(e)
@@ -226,115 +144,47 @@ export const register: Register = on => {
       const id = keyOf(`${arg}|${await $.clock.now()}`).slice(0, 10)
       shownById.set(id, shown)
 
-      track('img_command', { kind: shown.frames ? 'video' : 'image' })
       return { text: `Showing ${shown.title}.\n${MARK}#${id}` }
     } catch (err) {
-      const n = noticeOf(err, expand(arg, state.cwd, state.home), state.home)
-      track('show_failed', { from: 'img_command', reason: REASONS[n.kind] })
-      return { text: n.message }
+      return { text: noticeOf(err, expand(arg, state.cwd, state.home), state.home).message }
     }
   })
 
-  on('tool.call', { tool: /^mcp__show-your-work__show_(image|video)$/ }, async ($, e) => {
-    freshCalls.add(e.tool_use_id)
+  on('tool.call', { tool: /^mcp__show-your-work__show_image$/ }, async ($, e) => {
     const input = { ...e } as unknown as {
-      path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string; checks?: Check[]
-      compare?: string; compare_checks?: Check[]; label?: string; compare_label?: string; overlay?: Overlay; versions?: unknown; previous?: string; changes_title?: string
+      path?: string; title?: string; change?: string; pr?: string; changes?: KeyChange[]; summary?: Summary[]; url?: string
+      compare?: string; label?: string; compare_label?: string
     }
     if (!input.path) return { deny: 'A path is needed.' }
     await setUp($)
-    // The history's copy of a file that then can't be shown goes again.
-    let copied = ''
     try {
       input.path = await locate($, input.path)
       if (input.compare) input.compare = await locate($, input.compare)
-      const note = noteOf(input.changes, input.change, input.title)
-      const parent = handleOf(input.previous)
-      // Only pictures and videos are copied into the history: never a key or
-      // a config file a model was talked into naming.
-      if (!MEDIA.test(input.path)) throw new Error(`not an image: ${input.path}`)
-      const kept = await storeVersion($, input.path, note, input.title, parent)
-        .catch(() => ({ real: input.path!, copy: input.path!, id: '', chain: [] as { path: string; note?: string; id: string }[], missing: undefined as string | undefined }))
-      if (kept.copy !== kept.real) copied = kept.copy
-      // Every earlier version: the ones handed in, then the ones shown before.
-      const given = await Promise.all(versionsOf(input.versions).map(async v => ({ ...v, path: await locate($, v.path) })))
-      const earlier = [...given, ...kept.chain.filter(k => !given.some(g => g.path === k.path))]
-      const compare = input.compare ?? earlier.at(-1)?.path
+      // Only pictures are read: never a key or a config file a model was
+      // talked into naming.
+      if (!IMAGE.test(input.path)) throw new Error(`not an image: ${input.path}`)
       const shown: Shown = {
-        ...(await prepare($, kept.copy, input.title ?? input.path.split('/').pop(), await identityOf($, input.path))),
-        origin: kept.real,
+        ...(await prepare($, input.path, input.title ?? input.path.split('/').pop())),
         change: input.change,
         pr: input.pr,
         url: input.url,
-        checks: input.checks,
-        changes: timesThatMean(input.changes, VIDEO.test(input.path)),
+        changes: input.changes,
         summary: input.summary,
         label: input.label,
-        overlay: input.overlay,
-        note,
-        ...(input.changes_title ? { changesTitle: String(input.changes_title).slice(0, 28) } : {}),
       }
-      const lead = shown.frames?.lead ?? 0
-      shown.checks = shiftTimes(shown.checks, lead)
-      shown.changes = shiftTimes(shown.changes, lead)
-      if (compare) {
+      if (input.compare) {
         const label = input.compare_label
-        shown.compare = {
-          ...(input.compare ? await prepare($, compare, label ?? 'Original') : await preparedOf($, compare)),
-          label,
-          checks: input.compare_checks,
-        }
-        shown.compare.checks = shiftTimes(shown.compare.checks, shown.compare.frames?.lead ?? 0)
-        // Pictures step back through every earlier version; a clip has only
-        // Original and Updated.
-        if (!shown.frames && earlier.length > 1) {
-          shown.history = input.compare && !earlier.some(v => v.path === compare) ? [{ path: compare }, ...earlier] : earlier
-          shown.historyAt = shown.history.findIndex(v => v.path === compare)
-          remember(compare, shown.compare)
-        }
-        if (shown.frames && shown.compare.frames) Object.assign(shown, (await preparePair($, shown.compare, shown)) ?? {})
+        shown.compare = { ...(await prepare($, input.compare, label ?? 'Original')), label }
       }
-      if (!shown.frames && kept.copy !== kept.real)
-        remember(kept.copy, { kind: shown.kind, path: shown.path, source: shown.source, width: shown.width, height: shown.height, title: 'Original', generation: shown.generation })
-      const what = shown.frames ? `video, ${clock(shown.frames.duration)}` : `${shown.sourceWidth ?? shown.width}×${shown.sourceHeight ?? shown.height}`
-      const checks = [...(shown.checks ?? []), ...(shown.compare?.checks ?? [])]
-      track(shown.frames ? 'video_shown' : 'image_shown', {
-        format: (input.path.match(/\.([a-z0-9]+)$/i)?.[1] ?? 'none').toLowerCase().slice(0, 5),
-        ...(shown.frames ? { duration: Math.round(shown.frames.duration * 10) / 10, frames: shown.frames.count } : {}),
-        has_compare: !!shown.compare,
-        is_side_by_side: !!shown.pair,
-        is_revision: !!input.previous,
-        versions: shown.history?.length ?? 0,
-        changes: shown.changes?.length ?? 0,
-        has_custom_changes_title: !!input.changes_title,
-        summary_lines: shown.summary?.length ?? 0,
-        summary_ok: shown.summary ? shown.summary.every(l => l.ok) : undefined,
-        checks: checks.length,
-        checks_failed: checks.filter(c => !c.ok).length,
-        has_url: !!input.url,
-        has_pr: !!input.pr,
-      })
-
-      const handle = kept.id ? ` #${kept.id}${kept.chain.length ? `, version ${kept.chain.length + 1} after #${kept.chain.at(-1)!.id}` : ''}.` : ''
-      const hint = (kept.missing ? ` #${kept.missing} wasn't found, so this has no history.` : '') + handle
+      const what = `${shown.sourceWidth ?? shown.width}×${shown.sourceHeight ?? shown.height}`
       const opening = state.canImage
         ? `Shown: ${shown.title} (${what}).`
-        : `Not shown: ${cantDraw(state.drawCause, shown.title, shown.frames ? 'video' : 'picture', state.sessionId).claude} Don't say it was shown.`
+        : `Not shown: ${cantDraw(state.drawCause, shown.title, state.sessionId).claude} Don't say it was shown.`
       // Claude gets one short line; the drawing data stays out of its context.
-      let mark = JSON.stringify(shown)
-      if (kept.id) {
-        const saved = await $.process.run(['sh', '-c', 'printf "%s" "$1" > "$0"', `${await storeOf($)}/${kept.id}.shown`, mark]).catch(() => null)
-        if (saved && saved.exitCode === 0) {
-          shownById.set(kept.id, shown)
-          mark = `#${kept.id}`
-        }
-      }
-      return { result: `${opening}${hint}\n${MARK}${mark}` }
+      return { result: `${opening}\n${await markOf($, shown)}` }
     } catch (err) {
-      if (copied) void $.process.run(['rm', '-f', '--', copied, copied.replace(/\.[^./]+$/, '.json')]).catch(() => undefined)
       const n = noticeOf(err, expand(input.path ?? '', state.cwd, state.home), state.home)
       notices.set(e.tool_use_id, n)
-      track('show_failed', { from: String((e as { tool?: string }).tool ?? '').endsWith('video') ? 'show_video' : 'show_image', reason: REASONS[n.kind] })
       return { deny: `show-your-work: ${n.message}` }
     }
   }).catch(() => ({ deny: 'show-your-work: it could not be shown.' }))
@@ -345,7 +195,7 @@ export const register: Register = on => {
     if (!TOOLS.includes(props.tool)) return next(e)
     const { Text } = $.ui.resolve(e) as Ui
 
-    return <Text>{toolLine(props.tool, props.input, props.isRunning)}</Text>
+    return <Text>{toolLine(props.input, props.isRunning)}</Text>
   })
 
   // Inline in the transcript: the player is the tool's result row.
@@ -358,15 +208,11 @@ export const register: Register = on => {
       if (!n) return next(e)
       return NoticeBox($.ui.resolve(e) as Ui, $, (e.viewport?.columns ?? 100) - 8, { ...n, copy: n.prompt, label: 'Copy prompt', action: `copy_${n.kind}_prompt` })
     }
-    // Scrolled out of view: stop playing, and don't start there.
     const one = player(e.requestId)
     if (props.onScreen === null) {
-      if (one.timer) stop($, e.requestId)
-      one.hasAutoplayed = true
       one.wasAway = true
     } else if (one.wasAway && props.onScreen) {
-      // Back in view: draw it fresh. The terminal may have dropped the picture
-      // and the cache its frame; the redraw decodes the frame again if needed.
+      // Back in view: draw it fresh. The terminal may have dropped the picture.
       one.wasAway = false
       versions.set(e.requestId, (versions.get(e.requestId) ?? 0) + 1)
       one.resend = true
@@ -376,13 +222,12 @@ export const register: Register = on => {
     if (kept?.key === key) return kept.tree as Awaited<ReturnType<typeof Viewer>>
     const shown = await shownOf($, props.output)
     if (!shown) return next(e)
-    const view = atStep(shown, e.requestId)
-    const tree = await Viewer($, e, view, e.requestId, false, e.viewport)
+    const tree = await Viewer($, e, shown, e.requestId, false, e.viewport)
     drawn.set(e.requestId, { key, tree })
-    // As the play button does: send the frame on screen to the terminal again.
+    // Send the picture on screen to the terminal again.
     if (one.resend) {
       one.resend = false
-      void $.clock.sleep(120).then(() => draw($, e.requestId, sideOf(view, e.requestId), view)).catch(() => undefined)
+      void $.clock.sleep(120).then(() => draw($, e.requestId, sideOf(shown, e.requestId))).catch(() => undefined)
     }
 
     return tree
@@ -393,71 +238,19 @@ export const register: Register = on => {
     const shown = await read($, current)
     if (!shown) return <Text dimColor>Nothing to show yet. Run /img path/to/file</Text>
 
-    return Viewer($, e, atStep(shown, PANE), PANE, true, paneSize(e.viewport, e.props as PaneProps))
+    return Viewer($, e, shown, PANE, true, paneSize(e.viewport, e.props as PaneProps))
   })
 
-  on('command.run', { command: 'show-your-work' }, async ($, e) => {
-    await setUp($)
-    if (/^tour$/i.test(e.args.trim())) {
-      startTour($)
-      return { text: TOUR_TEXT }
-    }
-    // Run again while they're open, the settings close.
-    if ((await $.ui.panes()).some(pane => pane.id === WELCOME)) {
-      await $.ui.close({ id: WELCOME })
-      return { text: 'Closed the show-your-work settings.' }
-    }
-    await openSettings($)
-    return { text: 'Opened the show-your-work settings.' }
-  })
-
-  on('ui.render', { component: 'Pane', requestId: WELCOME }, async ($, e) => {
-    await read($, welcome)
-    await loadSettings($)
-    return Settings($.ui.resolve(e) as Ui, $)
-  })
-
-
-  // The welcome's row: /show-your-work as the plugin ran it on install.
-  const welcomeRows = new Set<string>()
-  const tourRows = new Set<string>()
+  // /img: the player, in the chat under the command.
   on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
     const row = e.props as { command?: string; args?: string; text?: string; isErrored?: boolean; onScreen?: unknown }
-    // /img: the player, in the chat under the command.
-    if (row.command === 'img' && !row.isErrored && (row.text ?? '').includes(MARK)) {
-      const shown = await shownOf($, row.text ?? '')
-      if (!shown) {
-        // A row from before a restart: the picture is no longer at hand.
-        const { Text } = $.ui.resolve(e) as Ui
-        return <Text dimColor>{(row.text ?? '').split('\n')[0]}</Text>
-      }
-      const one = player(e.requestId)
-      if (row.onScreen === null && one.timer) stop($, e.requestId)
-      return Viewer($, e, atStep(shown, e.requestId), e.requestId, false, e.viewport)
+    if (row.command !== 'img' || row.isErrored || !(row.text ?? '').includes(MARK)) return next(e)
+    const shown = await shownOf($, row.text ?? '')
+    if (!shown) {
+      // A row from before a restart: the picture is no longer at hand.
+      const { Text } = $.ui.resolve(e) as Ui
+      return <Text dimColor>{(row.text ?? '').split('\n')[0]}</Text>
     }
-    if (row.command !== PLUGIN) return next(e)
-    if (/^tour$/i.test(row.args?.trim() ?? '') || (row.text ?? '').includes(TOUR_TEXT)) {
-      // A tour row not drawn before is the newest: it becomes the live one.
-      if (!tourRows.has(e.requestId)) {
-        tourRows.add(e.requestId)
-        const was = state.tourSite
-        state.tourSite = e.requestId
-        const isFresh = state.isTourPending || !was
-        state.isTourPending = false
-        // Drawing can't change state: the stop (re)starts just after.
-        void $.clock.sleep(0).then(() => { if (was && was !== state.tourSite) stop($, was); goToStop($, isFresh ? 0 : state.tourStop) }, () => undefined)
-      }
-      if (e.requestId !== state.tourSite) {
-        const { Text } = $.ui.resolve(e) as Ui
-        return <Text dimColor>This tour moved to a newer one below.</Text>
-      }
-      await read($, welcome)
-      return Tour($, e, e.viewport)
-    }
-    if (!welcomeRows.has(e.requestId)) {
-      if (!(row.text ?? '').includes(WELCOME_TEXT)) return next(e)
-      welcomeRows.add(e.requestId)
-    }
-    return Opening($, e, e.requestId, e.viewport)
+    return Viewer($, e, shown, e.requestId, false, e.viewport)
   })
 }

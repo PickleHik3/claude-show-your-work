@@ -18,10 +18,10 @@ const WIDE_ENOUGH = 110
 //   targetBox(w, h, ...)  the box a picture of that shape fills in it
 //   pixelsFor(box, cell)  the screen pixels that box needs (PX_MIN to PX_MAX)
 //   drawBox(w, h, ...)    the box drawn: the target, cut down to the picture's own pixels
-// Ghostty draws a picture at its own pixel size at most, so pictures and
-// frames are made as wide as their box (frameWidth when prepared, sharpen
-// when a player needs more), and drawBox keeps a picture that's still short
-// of pixels whole instead of small in a big box.
+// Ghostty draws a picture at its own pixel size at most, so pictures are
+// made as wide as their box (frameWidth when prepared, sharpen when a player
+// needs more), and drawBox keeps a picture that's still short of pixels whole
+// instead of small in a big box.
 const PX_MIN = 320
 export const PX_MAX = 2400
 export type Room = { columns: number; rows: number; isPane: boolean; hasReport: boolean }
@@ -67,17 +67,12 @@ export function fit(width: number, height: number, maxCols: number, maxRows: num
   return { columns: Math.min(255, columns), rows: Math.max(1, Math.min(255, rows)) }
 }
 
-// The width a picture or clip is made at when it's prepared: what an inline
-// player in this terminal needs (see layoutOf). 1600 px at most while unmeasured.
+// The width a picture is made at when it's prepared: what an inline player in
+// this terminal needs (see layoutOf). 1600 px at most while unmeasured.
 export function frameWidth(width: number, height: number, term: { columns: number; rows: number } | null, px: Cell | null) {
   if (!term || !px || !width || !height) return Math.min(1600, width)
   const layout = layoutOf({ columns: term.columns, rows: term.rows, isPane: false, hasReport: false })
   return pixelsFor(targetBox(width, height, layout, px), px, width / height)
-}
-
-// The drawn box for `room` columns already free of chrome (the pair view).
-export function sizeFor(width: number, height: number, room: number, rows: number, isPane: boolean, px: Cell | null = state.cell) {
-  return drawBox(width, height, layoutOf({ columns: room + (isPane ? 6 : 10), rows, isPane, hasReport: false }), px)
 }
 
 // The terminal's cell in pixels, from the size its tty reports; null where it
@@ -120,18 +115,6 @@ export const paneSize = (viewport: { columns: number; rows: number } | undefined
   if (!viewport) return viewport
   const rows = props.bodyRows ?? props.scroll?.bodyRows
   return { columns: props.bodyColumns || viewport.columns, rows: rows || viewport.rows }
-}
-
-export const clock = (s: number) => `${Math.floor(Math.max(0, s) / 60)}:${String(Math.floor(Math.max(0, s) % 60)).padStart(2, '0')}`
-
-// One line, whatever the length: cut at a word, with … where it was cut.
-export function oneLine(text: string, width: number): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  width = Math.max(4, Math.floor(width))
-  if (flat.length <= width) return flat
-  const cut = flat.slice(0, width - 1)
-  const space = cut.lastIndexOf(' ')
-  return `${(space > width / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:]+$/, '')}…`
 }
 
 // A tab name short enough that every tab fits on one line and stays clickable.
