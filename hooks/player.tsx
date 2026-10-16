@@ -6,7 +6,8 @@ import type { Shown, Summary } from '../types'
 
 import { state } from './state'
 import { drawBox, layoutOf, pagesOf, pixelsFor, remeasure, SIDE, SIDEBAR, tabLabel, targetBox, wrapWords } from './layout'
-import { isGone, keyOf, MAX_STILL, pngSize } from './media'
+import { isDataSaver, isGone, keyOf, MAX_STILL, pngDims, pngSize } from './media'
+import { isLinkForced, saveSetting } from './settings'
 
 // What each drawn site (a transcript row's tool_use_id, or the pane) shows.
 type Player = {
@@ -19,6 +20,11 @@ type Player = {
   changesPage?: number
   // the picture's size in cells as last drawn, for repaints
   box?: { columns: number; rows: number }
+  // Show full size pressed: the full picture in place of its data saver copy
+  isFull?: boolean
+  // the copy each picture (viewKey) was drawn with; a swap changes what is
+  // on screen, not this, so the redraw after it sends nothing again
+  drawnAs?: Record<string, Mode | undefined>
 }
 export const players = new Map<string, Player>()
 // Each window's own repaint count, beside state.version for all of them.
@@ -89,7 +95,16 @@ export const sideOf = (shown: Shown, site: string): Shown =>
 // picture would keep that one's size and place.
 const viewKey = (site: string) => (player(site).isCompare ? 'view-original' : 'view')
 
-type Source = { png: string } | { file: string; format: 'png'; generation?: number }
+export type Source = { png: string } | { file: string; format: 'png'; generation?: number }
+
+// Which copy of a picture is sent: its data saver copy, or the full one.
+export type Mode = 'saver' | 'full'
+export type Pick = { file: string; mode: Mode; width: number; height: number }
+const modeNow = (site: string, media: Shown): Mode => (media.saver && !player(site).isFull ? 'saver' : 'full')
+const pickOf = (media: Shown, mode: Mode): Pick =>
+  mode === 'saver' && media.saver
+    ? { file: media.saver.path, mode, width: media.saver.width, height: media.saver.height }
+    : { file: media.path, mode: 'full', width: media.width, height: media.height }
 
 // Claude Code takes at most 2 MiB of picture as bytes: a bigger one is sent as
 // a smaller copy, made once with whatever the machine has (sips, ffmpeg or
@@ -159,15 +174,40 @@ async function picFor($: EngineInterface, file: string, _box: { columns: number;
   return { src: await pngSource($, file) }
 }
 
+// Every picture sent to the terminal is a line in the temp folder's
+// send.log: when, the site, which copy, its pixels and bytes, how long
+// $.ui.blit took ('-' for a render's own send, which isn't timed) and what
+// sent it. A file source crosses as a path ('file'). Kept under a megabyte.
+export function sendLine(at: number, site: string, pick: Pick, src: Source, ms: number | null, via: 'render' | 'blit' | 'probe') {
+  const dims = 'png' in src ? pngDims(src.png) : null
+  const bytes = 'png' in src ? (src.png.length / 4) * 3 - (src.png.match(/=*$/)?.[0].length ?? 0) : 'file'
+  return `${new Date(at).toISOString()} ${site} ${pick.mode} ${dims?.width ?? pick.width}x${dims?.height ?? pick.height} ${bytes} ${ms === null ? '-' : Math.round(ms)} ${via}`
+}
+const LOG_SH = '[ -L "$0" ] && exit 1; [ -f "$0" ] && [ "$(wc -c < "$0")" -gt 1000000 ] && : > "$0"; printf "%s\\n" "$1" >> "$0"'
+function logSend($: EngineInterface, line: string) {
+  void Promise.resolve().then(() => $.process.run(['sh', '-c', LOG_SH, `${state.TMP}/send.log`, line])).catch(() => undefined)
+}
+// A render sends its picture when the picture or its box is new to the Image.
+const lastDrawn = new Map<string, string>()
+function noteDrawn($: EngineInterface, site: string, key: string, pick: Pick, src: Source, box: Box) {
+  const id = `${site}|${key}`, what = `${pick.file}|${box.columns}x${box.rows}`
+  if (lastDrawn.get(id) === what) return
+  lastDrawn.set(id, what)
+  void $.clock.now().then(at => logSend($, sendLine(at, site, pick, src, null, 'render')), () => undefined)
+}
+
 // After a first draw, asks whether the picture really drew; if the terminal
 // can only show the alt text, every player shows a notice instead.
-function probe($: EngineInterface, site: string, key: string, pic: Pic) {
+function probe($: EngineInterface, site: string, key: string, pic: Pic, pick: Pick) {
   if (!state.canImage || state.probed) return
   state.probed = true
   void $.clock.sleep(250).then(async () => {
     // A picture swapped in since then is the one on screen: send that one.
     const shownNow = swaps.get(`${site}|${key}`)?.last
-    const r = await $.ui.blit({ requestId: site, key, source: shownNow ? await pngSource($, shownNow) : pic.src })
+    const source = shownNow ? await pngSource($, shownNow.file) : pic.src
+    const started = await $.clock.now()
+    const r = await $.ui.blit({ requestId: site, key, source })
+    logSend($, sendLine(started, site, shownNow ?? pick, source, (await $.clock.now()) - started, 'probe'))
     if (r.deny && /alt/i.test(r.deny)) {
       state.canImage = false
       state.drawCause = causeOf(state.inTmux, state.terminalName)
@@ -182,9 +222,9 @@ function probe($: EngineInterface, site: string, key: string, pic: Pic) {
 // order) and never queues up behind it.
 // Each draw takes a ticket; one whose picture was ready later than a newer
 // draw's is stale and skipped.
-const swaps = new Map<string, { isBusy: boolean; ticket: number; next?: string; last?: string }>()
+const swaps = new Map<string, { isBusy: boolean; ticket: number; next?: Pick; last?: Pick }>()
 let tickets = 0
-async function blit($: EngineInterface, site: string, key: string, file: string, ticket = ++tickets) {
+async function blit($: EngineInterface, site: string, key: string, file: Pick, ticket = ++tickets) {
   if (!state.canImage) return
   const id = `${site}|${key}`
   let lane = swaps.get(id)
@@ -196,10 +236,13 @@ async function blit($: EngineInterface, site: string, key: string, file: string,
     return
   }
   lane.isBusy = true
-  let job: string | undefined = file
+  let job: Pick | undefined = file
   try {
     while (job) {
-      await $.ui.blit({ requestId: site, key, source: await pngSource($, job) })
+      const source = await pngSource($, job.file)
+      const started = await $.clock.now()
+      await $.ui.blit({ requestId: site, key, source })
+      logSend($, sendLine(started, site, job, source, (await $.clock.now()) - started, 'blit'))
       lane.last = job
       job = lane.next
       lane.next = undefined
@@ -209,15 +252,52 @@ async function blit($: EngineInterface, site: string, key: string, file: string,
   }
 }
 
-// Sends the side on screen to the terminal again, in place.
+// Sends the side on screen to the terminal again, in place: the copy the
+// site shows now (data saver's or the full one).
 export function draw($: EngineInterface, site: string, media: Shown) {
-  void blit($, site, viewKey(site), media.path).catch(() => undefined)
+  void blit($, site, viewKey(site), pickOf(media, modeNow(site, media))).catch(() => undefined)
+}
+
+// Show full size / Show small: the other copy is swapped into the same
+// picture in place. The full one is read and sent only when first asked for.
+// The redraw only relabels the button: the Image keeps the source it was
+// drawn with (drawnAs), so the picture isn't sent a second time.
+function toggleFull($: EngineInterface, site: string, shown: Shown) {
+  const one = player(site)
+  const media = sideOf(shown, site)
+  if (!media.saver) return
+  one.isFull = !one.isFull
+  void blit($, site, viewKey(site), pickOf(media, modeNow(site, media))).catch(() => undefined)
+  redraw($, site)
+}
+
+// The data saver switch, remembered across sessions; it applies to pictures
+// shown from now on. SHOW_YOUR_WORK_LINK overrides it: then the button only
+// says so (a Button can't be disabled).
+async function switchSaver($: EngineInterface, isOn: boolean) {
+  await saveSetting($, 'dataSaver', isOn)
+  $.ui.toast(isOn ? 'Data saver on: pictures shown from now on are sent small.' : 'Data saver off: pictures shown from now on are sent full size.')
+  redraw($)
+}
+function SaverSwitch(ui: Ui, $: EngineInterface) {
+  const { Button } = ui
+  const isOn = isDataSaver()
+  const label = `Data saver: ${isOn ? 'on' : 'off'}`
+  if (isLinkForced(state.link)) {
+    return <Button key="data-saver" plain dimColor label={`${label} (env)`} onPress={() => void $.ui.toast(`SHOW_YOUR_WORK_LINK=${state.link} sets this. Unset it to choose here.`)} />
+  }
+  return <Button key="data-saver" plain dimColor label={label} onPress={() => void switchSaver($, !isOn).catch(() => $.ui.toast('Could not save the data saver setting'))} />
 }
 
 function flip($: EngineInterface, site: string, shown: Shown, toCompare: boolean) {
   const one = player(site)
   if (!shown.compare || !!one.isCompare === toCompare) return
   one.isCompare = toCompare
+  // The side switched to is a new Image: drawn with the copy the site shows
+  // now, and only now, so the side not on screen sends nothing until then.
+  const key = viewKey(site)
+  if (one.drawnAs) one.drawnAs[key] = undefined
+  lastDrawn.delete(`${site}|${key}`)
   // A still is drawn by the redraw at its own size; a swap would put it in
   // the other side's box first.
   redraw($, site)
@@ -550,9 +630,10 @@ export async function Viewer(
   const layout = layoutOf({ columns, rows: viewport?.rows ?? 40, isPane, hasReport })
   const isWide = layout.isWide
   const other = shown.compare ? (media === shown ? shown.compare : shown) : null
-  for (const side of [media, other]) if (side) useSharpest(side)
-  // A side short of pixels for its box gets a sharper copy, made in the background.
-  if (state.cell) for (const side of [media, other]) if (side) sharpen($, side, pixelsFor(targetBox(side.width, side.height, layout, state.cell), state.cell, side.width / side.height))
+  // A side short of pixels for its box gets a sharper copy, made in the
+  // background; not one with a data saver copy, whose point is fewer bytes.
+  for (const side of [media, other]) if (side && !side.saver) useSharpest(side)
+  if (state.cell) for (const side of [media, other]) if (side && !side.saver) sharpen($, side, pixelsFor(targetBox(side.width, side.height, layout, state.cell), state.cell, side.width / side.height))
   // This side's own box, and the frame it sits in: Original and Updated
   // share the larger of their two boxes, so switching never moves the layout
   // and each side draws whole at its own size, centred.
@@ -578,10 +659,18 @@ export async function Viewer(
     : null
 
   if (!state.canImage) return Warning(ui, $, shown, columns - 8)
+  // A new box sends the picture again anyway: it goes as the copy shown now.
+  const key = viewKey(site)
+  const drawnAs = (one.drawnAs ??= {})
+  if (one.box && (one.box.columns !== own.columns || one.box.rows !== own.rows)) drawnAs[key] = undefined
   one.box = { columns: own.columns, rows: own.rows }
   if (await isGone($, media.path)) return Expired(ui, $, shown, columns - 8)
-  const pic = await picFor($, media.path, own)
-  probe($, site, viewKey(site), pic)
+  // A data saver copy cleared from the temp folder: the full one stands in.
+  if (media.saver && (await isGone($, media.saver.path))) media.saver = undefined
+  const pick = pickOf(media, (drawnAs[key] ??= modeNow(site, media)))
+  const pic = await picFor($, pick.file, own)
+  noteDrawn($, site, key, pick, pic.src, own)
+  probe($, site, key, pic, pick)
 
   const actions = Actions(ui, $, source, isNarrow)
   // The top corner opens it: the page it shows, else the file itself.
@@ -615,6 +704,11 @@ export async function Viewer(
         <Box flexDirection="row" columnGap={2}>
           {opener}
           {actions}
+        </Box>
+        {/* Data saver's two buttons: their own group, so a narrow row wraps them under the rest. */}
+        <Box flexDirection="row" columnGap={2}>
+          {media.saver && <Button key="full-size" plain dimColor label={one.isFull ? 'Show small' : 'Show full size'} onPress={() => toggleFull($, site, shown)} />}
+          {SaverSwitch(ui, $)}
         </Box>
       </Box>
     </Box>

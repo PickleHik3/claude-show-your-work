@@ -19,6 +19,9 @@ export type Shown = {
   sourceHeight?: number
   title: string
   generation: number
+  // with data saver on, the small copy sent in place of `path` until the
+  // person asks for the full size, and its size on disk
+  saver?: { path: string; width: number; height: number; bytes: number }
   // QA context: the change and its PR
   change?: string
   pr?: string

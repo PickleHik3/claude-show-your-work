@@ -33,6 +33,11 @@ export const state = {
   // Over ssh the terminal is on another machine and can't read the file, so the
   // bytes have to cross after all.
   sendBytes: false,
+  // SHOW_YOUR_WORK_LINK: 'slow' forces data saver on, 'fast' forces it off,
+  // anything else leaves it to the remembered setting (see dataSaverOf).
+  link: '',
+  // SHOW_YOUR_WORK_PX: the width a data saver copy is made at, when set.
+  saverPx: 0,
   // Whether the terminal draws pictures. Some sessions cannot (a background
   // session's relay): the first blit says so, and from then on every player
   // shows a warning with the way back instead. (Coloured half-block cells were

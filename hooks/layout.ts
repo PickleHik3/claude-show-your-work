@@ -75,6 +75,16 @@ export function frameWidth(width: number, height: number, term: { columns: numbe
   return pixelsFor(targetBox(width, height, layout, px), px, width / height)
 }
 
+// The width a data saver copy is made at: SHOW_YOUR_WORK_PX when set, else
+// the terminal's full width in pixels when its cell is known, else 1080 (a
+// phone). Never past the picture's own width. A tall screenshot keeps the
+// full width too, rather than a width that fits its height in the rows.
+export const SAVER_PX = 1080
+export function saverWidth(own: number, envPx: number, px: Cell | null, term: { columns: number } | null) {
+  const want = envPx > 0 ? envPx : px && term ? Math.round(px.width * term.columns) : SAVER_PX
+  return Math.max(1, Math.min(own, want))
+}
+
 // The terminal's cell in pixels, from the size its tty reports; null where it
 // reports none (tmux, a relay), and measured again when the window changes.
 export type Cell = { width: number; height: number }

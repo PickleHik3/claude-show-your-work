@@ -1,5 +1,5 @@
 // What the session runs on, found at its start: the temp folder, home,
-// ffmpeg, ssh and the terminal's cell.
+// ffmpeg, ssh, data saver's overrides and the terminal's cell.
 import type { EngineInterface } from 'claude-code'
 
 import { state } from './state'
@@ -39,6 +39,9 @@ export function setUp($: EngineInterface): Promise<void> {
     const sshConnection = await Promise.resolve().then(() => $.env.get('SSH_CONNECTION')).catch(() => undefined)
     const sshTty = await Promise.resolve().then(() => $.env.get('SSH_TTY')).catch(() => undefined)
     if (sshConnection || sshTty) state.sendBytes = true
+    // Data saver's overrides (see dataSaverOf and saverWidth).
+    state.link = ((await Promise.resolve().then(() => $.env.get('SHOW_YOUR_WORK_LINK')).catch(() => undefined)) ?? '').trim().toLowerCase()
+    state.saverPx = Math.floor(Number(await Promise.resolve().then(() => $.env.get('SHOW_YOUR_WORK_PX')).catch(() => undefined)) || 0)
     const engine = await Promise.resolve().then(() => $.session.version()).catch(() => null)
     state.canColourButtons = !!engine && isAtLeast(engine.base ?? engine.version, '2.1.295')
     await Promise.resolve().then(() => measureCells($)).catch(() => undefined)

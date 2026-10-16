@@ -10,7 +10,7 @@ import { paneSize } from './layout'
 import type { PaneProps } from './layout'
 import { setUp } from './setup'
 import { loadSettings } from './settings'
-import { CLEAN_SH, expand, findPasted, keyOf, locate, NO_FFMPEG, noticeOf, prepare } from './media'
+import { CLEAN_SH, expand, findPasted, keyOf, locate, NO_FFMPEG, noticeOf, prepare, saverNote } from './media'
 import type { Notice } from './media'
 import { MARK, markOf, shownById, shownOf, textOf } from './marker'
 import { cantDraw, draw, NoticeBox, player, sideOf, toolLine, versions, Viewer } from './player'
@@ -144,7 +144,8 @@ export const register: Register = on => {
       const id = keyOf(`${arg}|${await $.clock.now()}`).slice(0, 10)
       shownById.set(id, shown)
 
-      return { text: `Showing ${shown.title}.\n${MARK}#${id}` }
+      const saved = saverNote(shown.saver)
+      return { text: `Showing ${shown.title}${saved ? ` (${saved})` : ''}.\n${MARK}#${id}` }
     } catch (err) {
       return { text: noticeOf(err, expand(arg, state.cwd, state.home), state.home).message }
     }
@@ -176,7 +177,9 @@ export const register: Register = on => {
         const label = input.compare_label
         shown.compare = { ...(await prepare($, input.compare, label ?? 'Original')), label }
       }
-      const what = `${shown.sourceWidth ?? shown.width}×${shown.sourceHeight ?? shown.height}`
+      // The size of the file, then the data saver copy's when one is sent.
+      const saved = saverNote(shown.saver)
+      const what = `${shown.sourceWidth ?? shown.width}×${shown.sourceHeight ?? shown.height}${saved ? `; ${saved}` : ''}`
       const opening = state.canImage
         ? `Shown: ${shown.title} (${what}).`
         : `Not shown: ${cantDraw(state.drawCause, shown.title, state.sessionId).claude} Don't say it was shown.`
