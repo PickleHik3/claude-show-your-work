@@ -4,7 +4,7 @@
     "name": "PickleHik3"
   },
   "metadata": {
-    "description": "show-your-work: Claude shows screenshots and videos of its work inline in your terminal"
+    "description": "show-your-work: Claude shows screenshots of its work inline in your terminal"
   },
   "plugins": [
     {

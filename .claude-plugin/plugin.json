@@ -1,7 +1,7 @@
 {
   "name": "show-your-work",
-  "version": "0.6.3-pk.2",
-  "description": "Claude shows its finished work right in the chat: screenshots, videos and synced before/after QA. Fork of iamumeransari/claude-show-your-work, retargeted at Android (ad tool), telemetry and auto-update off by default",
+  "version": "0.7.0-pk.1",
+  "description": "Claude shows its finished work right in the chat as pictures, with an Original/Updated compare and a QA report. An image-only fork of iamumeransari/claude-show-your-work for Android (ad tool) and web screenshots",
   "author": {
     "name": "Umer Ansari",
     "url": "https://github.com/iamumeransari"
@@ -11,7 +11,7 @@
   "license": "MIT",
   "keywords": [
     "screenshots",
-    "video",
+    "images",
     "android",
     "qa",
     "kitty",

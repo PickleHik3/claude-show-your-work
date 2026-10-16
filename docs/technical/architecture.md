@@ -1,38 +1,36 @@
 # Architecture
 
-How a picture or video gets from Claude's tool call to the terminal, and which module does each part. The topic notes go deeper on each step.
+How a picture gets from Claude's tool call to the terminal, and which module does each part. The topic notes go deeper on each step.
 
 ## Modules
 
 | Module | Holds |
 |---|---|
-| `register.tsx` | The entry module: the `show_image` and `show_video` tools, the `/img` and `/show-your-work` commands, and every `on(...)` hook that ties the modules together |
-| `state.ts` | What more than one module reads or changes: the session's facts, playback and tour progress, the settings |
-| `setup.ts` | Found once per session: temp folder, home, ffmpeg and ffprobe, ssh, the terminal |
-| `history.ts` | Every shown file kept in `.show-your-work/`, linked to the version before, and the marker a tool result carries |
-| `media.ts` | Getting files ready to draw: PNG conversion, video frames cut a chunk at a time, the side-by-side clip of two runs |
+| `register.tsx` | The entry module: the `show_image` tool, the `/img` command, and every `on(...)` hook that ties the modules together |
+| `state.ts` | What more than one module reads or changes: the session's facts and the repaint count |
+| `setup.ts` | Found once per session: temp folder, home, ffmpeg, ssh, the terminal |
+| `settings.ts` | Remembered switches, kept in the plugin's store under `settings`. There are none yet; the module is kept so a switch can be added without rebuilding the storage |
+| `media.ts` | Getting files ready to draw: finding the file, PNG conversion at the width the player needs, and the notice when it fails |
+| `marker.ts` | The marker a tool result carries, and the shown item saved behind it |
 | `layout.ts` | Sizing: from the room a player has to its box in cells and the pixels its picture needs |
-| `player.tsx` | Playback (timer, frame swaps, seek, compare) and the components that draw the player |
-| `onboarding.tsx`, `tour.ts` | The settings pane, the welcome and the tour |
-| `updater.ts` | The daily update check and moves between Stable and Latest |
-| `telemetry.ts` | Anonymous usage counts and the local timing log |
+| `player.tsx` | The components that draw the player, the Original/Updated switch, the in-place swap (`blit`) and the byte path for ssh (`pngSource`) |
 
 Only `register.tsx` is listed in `hooks.json`; it imports the rest. The loader's rules apply in every module (see `plugin-loader-and-hooks.md`).
 
 ## A tool call, end to end
 
-1. **Claude calls `show_image` or `show_video`** with a path, and optionally a title, changes, checks, a `compare` file and a `previous` version.
-2. **`tool.call` hook** (`register.tsx`): finds the file (`locate`), refuses anything that isn't a picture or video, and copies it into the version history (`storeVersion`, `history.ts`), linked to the version before it.
-3. **Preparing** (`prepare`, `media.ts`): a picture becomes a PNG at the width the player needs. A video gets a poster frame and its first 2 s chunk of frames; the rest are cut as it plays. A compare file is prepared the same way, and two videos get their matching moments lined up (`anchors`).
-4. **The result** goes back to Claude as a line of text plus a marker holding the prepared item. Claude never receives the picture, so showing it costs no tokens.
+1. **Claude calls `show_image`** with a path, and optionally a title, changes, a summary, a page url, a PR and a `compare` file.
+2. **`tool.call` hook** (`register.tsx`): finds the file (`locate`) and refuses anything that isn't a picture.
+3. **Preparing** (`prepare`, `media.ts`): the picture becomes a PNG at the width the player needs. A compare file is prepared the same way.
+4. **The result** goes back to Claude as a line of text plus a marker, `show-your-work:#<id>` (`markOf`, `marker.ts`). The shown item is saved under that id in the temp folder. Claude never receives the picture, so showing it costs no tokens.
 5. **`ui.render` for the `ToolResult`** (`register.tsx`): reads the marker (`shownOf`) and draws the `Viewer` (`player.tsx`). An unchanged player hands back its last drawing, so scrolling costs nothing.
 6. **Sizing** (`layout.ts`): the terminal's cell size in pixels comes from the tty. The player picks a box in cells for the picture's shape, and a sharper copy is made in the background if the box needs more pixels.
-7. **Drawing**: the `Image` element points Ghostty at the PNG by path, and Ghostty draws it through the kitty graphics protocol. Over ssh the bytes are sent instead.
-8. **Playback** (`player.tsx`): a timer advances one frame at a time at up to 12 fps. Each frame is swapped in with `$.ui.blit`, one swap in flight per picture with the newest frame winning. The next chunk is cut halfway through the current one, and chunks far from the playhead are pruned.
+7. **Drawing**: the `Image` element points Ghostty at the PNG by path, and Ghostty draws it through the kitty graphics protocol. Over ssh the bytes are sent instead (`pngSource`).
+8. **Swaps**: a picture already on screen is sent again in place with `$.ui.blit` (`blit`, `draw`), one swap in flight per picture with the newest winning. A row scrolled back into view does this.
 
 ## Where to look
 
 - A picture is the wrong size or blurry: `layout.ts`, then `showing-images.md`.
-- A video stutters or stalls: `player.tsx` (`play`, `blit`), `media.ts` (`ensureChunk`), then `playing-video.md` and its timing log.
-- A version is missing from History: `history.ts`, then `cache-and-version-history.md`.
+- A picture doesn't arrive over ssh, or is slow: `pngSource`, `readBytes` and `SHRINK_SH` in `player.tsx`, then `showing-images.md`.
+- An old row draws nothing: `marker.ts`, then `temp-folder.md`.
 - The plugin doesn't load at all: `plugin-loader-and-hooks.md`, and run `claude plugin test .`.
