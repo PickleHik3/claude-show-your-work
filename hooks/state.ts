@@ -44,6 +44,8 @@ export const state = {
   // tried as a fallback: unreadable.)
   canImage: true,
   probed: false,
+  // The site whose title bar holds the probe's dot until the probe answers.
+  dotSite: '',
   sessionId: '',
   drawCause: 'background' as DrawCause,
   inTmux: false,

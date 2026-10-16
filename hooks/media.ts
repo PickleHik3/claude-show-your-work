@@ -166,10 +166,12 @@ export async function prepare($: EngineInterface, raw: string, title?: string): 
   }
   // A picture narrower than the window shows it is drawn that wide.
   // Never past twice its own width: a small icon stays small.
-  // With data saver on, the small copy is made beside it, from the same PNG.
+  // With data saver on it is never enlarged (Show full size sends the file as
+  // it is), and the small copy is made beside it, from the same PNG.
   const now = await pngSize($, png)
-  const saving = isDataSaver() ? saverCopy($, png, now.width, real).catch(() => null) : Promise.resolve(null)
-  const wide = Math.min(frameWidth(now.width, now.height, state.termSize, state.cell), now.width * 2)
+  const isSaving = isDataSaver()
+  const saving = isSaving ? saverCopy($, png, now.width, real).catch(() => null) : Promise.resolve(null)
+  const wide = isSaving ? now.width : Math.min(frameWidth(now.width, now.height, state.termSize, state.cell), now.width * 2)
   if (wide > now.width) {
     state.generation += 1
     const big = `${state.TMP}/${png.split('/').pop()!.replace(/\.png$/i, '')}-${state.generation}-w${wide}.png`
@@ -185,6 +187,7 @@ export async function prepare($: EngineInterface, raw: string, title?: string): 
   return {
     kind: 'image', path: png, source: real, ...(await pngSize($, png)), sourceWidth: dims.width, sourceHeight: dims.height, title: name, generation: state.generation,
     ...(saver ? { saver } : {}),
+    ...(isSaving ? { isSaving } : {}),
   }
 }
 
@@ -195,32 +198,51 @@ export const isDataSaver = () => dataSaverOf(state.link, settings.dataSaver, sta
 export const saverNote = (saver?: Shown['saver']) =>
   saver ? `data saver, ${saver.width}×${saver.height}, ${Math.max(1, Math.round(saver.bytes / 1000))} KB` : ''
 
+// About what a data saver copy aims for, in bytes. Width wins: nothing
+// shrinks a copy below the pane's width to meet it.
+export const SAVER_BYTES = 150_000
+// Whether a small copy can pay off: the picture is wider than the copy would
+// be, or over SAVER_BYTES. One within both goes as it is, with no copy and no
+// Show full size.
+export const isSaverWorth = (bytes: number, own: number, width: number) => width < own || bytes > SAVER_BYTES
+
 // The small copy: scaled down to the terminal's width (saverWidth, never up),
-// then cut to 256 colours with pngquant, dithered; ImageMagick when pngquant
-// is missing or fails; the plain scaled PNG when both do. A copy that isn't
+// then cut to 256 colours with pngquant, dithered. On Linux the scaled picture
+// goes uncompressed down a pipe into pngquant, with no file between
+// (ImageMagick, else ffmpeg); sips (macOS) scales into a file first.
+// `--speed 8` took half the time of 3 on noise and a quarter to a third less
+// on a screenshot, for a few percent more bytes. ImageMagick when pngquant is
+// missing or fails; the plain scaled PNG when both do. A copy that isn't
 // smaller than what it was made from is dropped (ImageMagick's dither can
 // grow a flat screenshot). Kept in the temp folder by the original's path
-// and the width, and made again only when the original is newer. Nothing
-// shrinks it below that width to meet a byte budget: width wins.
+// and the width, and made again only when the original is newer.
 // No rm: the copies being made are emptied once used, and CLEAN_SH takes them.
 // Prints the copy's size in bytes.
 export const SAVER_SH = [
   'f="$0"; out="$1"; w="$2"; ff="$3"; orig="$4"',
   'size() { wc -c < "$1" | tr -d " "; }',
+  'has() { command -v "$1" >/dev/null 2>&1; }',
   'for x in "$out" "$out.r.png" "$out.q.png"; do [ -L "$x" ] && exit 1; done',
   '[ -s "$out" ] && [ "$out" -nt "$orig" ] && { size "$out"; exit 0; }',
   'r="$out.r.png"; q="$out.q.png"; src="$f"',
-  'if [ "$w" -gt 0 ]; then',
-  '  if command -v sips >/dev/null 2>&1; then sips -s format png --resampleWidth "$w" "$f" --out "$r" >/dev/null 2>&1 && src="$r"',
-  '  elif [ -x "$ff" ]; then "$ff" -v error -y -i "$f" -frames:v 1 -vf "scale=$w:-2:flags=lanczos" "$r" </dev/null 2>/dev/null && src="$r"',
-  '  elif command -v magick >/dev/null 2>&1; then magick "$f" -resize "${w}x" "$r" 2>/dev/null && src="$r"',
-  '  elif command -v convert >/dev/null 2>&1; then convert "$f" -resize "${w}x" "$r" 2>/dev/null && src="$r"',
-  '  fi',
-  'fi',
+  'pq() { pngquant 256 --speed 8 --strip - > "$q" 2>/dev/null && [ -s "$q" ]; }',
   ': > "$q"',
-  'if command -v pngquant >/dev/null 2>&1 && pngquant 256 --speed 3 --strip --force --output "$q" "$src" 2>/dev/null; then :',
-  'elif command -v magick >/dev/null 2>&1 && magick "$src" -dither FloydSteinberg -colors 256 "PNG8:$q" 2>/dev/null; then :',
-  'elif command -v convert >/dev/null 2>&1 && convert "$src" -dither FloydSteinberg -colors 256 "PNG8:$q" 2>/dev/null; then :',
+  'if [ "$w" -gt 0 ] && has pngquant && ! has sips; then',
+  '  { has magick && magick "$f" -resize "${w}x" -define png:compression-level=0 png:- 2>/dev/null | pq; } ||',
+  '    { [ -x "$ff" ] && "$ff" -v error -i "$f" -frames:v 1 -vf "scale=$w:-2:flags=lanczos" -c:v png -compression_level 0 -f image2pipe - </dev/null 2>/dev/null | pq; } || : > "$q"',
+  'fi',
+  'if [ ! -s "$q" ]; then',
+  '  if [ "$w" -gt 0 ]; then',
+  '    if has sips; then sips -s format png --resampleWidth "$w" "$f" --out "$r" >/dev/null 2>&1 && src="$r"',
+  '    elif [ -x "$ff" ]; then "$ff" -v error -y -i "$f" -frames:v 1 -vf "scale=$w:-2:flags=lanczos" "$r" </dev/null 2>/dev/null && src="$r"',
+  '    elif has magick; then magick "$f" -resize "${w}x" "$r" 2>/dev/null && src="$r"',
+  '    elif has convert; then convert "$f" -resize "${w}x" "$r" 2>/dev/null && src="$r"',
+  '    fi',
+  '  fi',
+  '  if has pngquant && pngquant 256 --speed 8 --strip --force --output "$q" "$src" 2>/dev/null; then :',
+  '  elif has magick && magick "$src" -dither FloydSteinberg -colors 256 "PNG8:$q" 2>/dev/null; then :',
+  '  elif has convert && convert "$src" -dither FloydSteinberg -colors 256 "PNG8:$q" 2>/dev/null; then :',
+  '  fi',
   'fi',
   'if [ -s "$q" ] && [ "$(size "$q")" -lt "$(size "$src")" ]; then mv -f "$q" "$out"',
   'elif [ "$src" = "$r" ]; then mv -f "$r" "$out"',
@@ -230,6 +252,9 @@ export const SAVER_SH = [
 ].join('\n')
 export async function saverCopy($: EngineInterface, png: string, ownWidth: number, real: string): Promise<Shown['saver'] | null> {
   const width = saverWidth(ownWidth, state.saverPx, state.cell, state.termSize)
+  // A size that can't be read counts as big: the copy is made.
+  const size = await Promise.resolve().then(() => $.fs.stat(png)).then(s => Number((s as { size?: unknown }).size) || Number.POSITIVE_INFINITY, () => Number.POSITIVE_INFINITY)
+  if (!isSaverWorth(size, ownWidth, width)) return null
   const out = `${state.TMP}/s-${keyOf(real)}-${width}.png`
   const made = await Promise.resolve().then(() => $.process.run(['sh', '-c', SAVER_SH, png, out, String(width < ownWidth ? width : 0), state.ffmpeg, real])).catch(() => null)
   const bytes = made?.exitCode === 0 ? Number(made.stdout.trim()) : 0

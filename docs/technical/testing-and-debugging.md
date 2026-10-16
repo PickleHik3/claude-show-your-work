@@ -23,6 +23,7 @@ Biome (`biome.json`), lint only: the formatter is off so diffs stay small. The r
 
 ## The test harness (`claude-code/testing`)
 
+- `claude plugin test` runs every `*.test.ts(x)` under the folder and takes no filter. To run one file, copy the folder somewhere with only that test file in `tests/`.
 - Every test loads the module, so a loader rule broken anywhere fails every test. That's the fastest way to catch the rules in `plugin-loader-and-hooks.md`.
 - Pure functions are exported and tested directly (`tests/fit.test.ts`, `tests/notices.test.ts`, `tests/saver.test.ts`). Prefer pulling logic into a small exported function over driving it through hooks.
 - Render tests mount a component with `$.ui.mount(target)` and read `drawn()`. Press buttons with `mounted.press({ key })`.

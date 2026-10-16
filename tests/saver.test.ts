@@ -2,8 +2,8 @@ import { expect, test } from 'claude-code/testing'
 
 import { dataSaverOf, isLinkForced, saveSetting } from '../hooks/settings'
 import { SAVER_PX, saverWidth } from '../hooks/layout'
-import { isDataSaver, SAVER_SH, saverCopy, saverNote } from '../hooks/media'
-import { sendLine } from '../hooks/player'
+import { isDataSaver, isSaverWorth, pngDims, SAVER_BYTES, SAVER_SH, saverCopy, saverNote } from '../hooks/media'
+import { DOT, mayWiden, probesWithDot, sendLine } from '../hooks/player'
 import { state } from '../hooks/state'
 
 // A real 3×2 PNG, 68 bytes.
@@ -77,6 +77,58 @@ test('the copy is made once by the shell script, at the pane width, and sized fr
   } finally {
     Object.assign(state, was)
   }
+})
+
+test('a copy is made only when it can pay off: a wider picture, or one over the byte goal', () => {
+  expect(SAVER_BYTES).toBe(150_000)
+  // Wider than the pane: made, however small the file.
+  expect(isSaverWorth(53_000, 1440, 1080)).toBe(true)
+  // Within the pane and the goal: sent as it is.
+  expect(isSaverWorth(36_000, 1080, 1080)).toBe(false)
+  expect(isSaverWorth(150_000, 720, 720)).toBe(false)
+  // Within the pane but heavy (noise): colours only.
+  expect(isSaverWorth(4_400_000, 1080, 1080)).toBe(true)
+})
+
+test('no copy, and no script run, for a picture already within the pane and the goal', async () => {
+  const runs: string[][] = []
+  const $ = {
+    process: {
+      run: async (argv: string[]) => {
+        runs.push(argv)
+        return { exitCode: 0, stdout: '1\n', stderr: '' }
+      },
+    },
+    fs: { stat: async () => ({ kind: 'file', size: 36_000 }), read: async () => ({ base64: PNG }) },
+  }
+  const was = { cell: state.cell, termSize: state.termSize, saverPx: state.saverPx }
+  Object.assign(state, { cell: null, termSize: null, saverPx: 0 })
+  try {
+    expect(await saverCopy($ as never, '/t/shot.png', 1080, '/w/shot.png')).toBe(null)
+    expect(runs.length).toBe(0)
+    // The same picture wider than the pane is copied.
+    await saverCopy($ as never, '/t/shot.png', 1440, '/w/shot.png')
+    expect(runs[0]!.slice(0, 3)).toEqual(['sh', '-c', SAVER_SH])
+  } finally {
+    Object.assign(state, was)
+  }
+})
+
+test('the first draw is probed with a one-cell dot when pictures go as bytes, never the picture again', () => {
+  // A real, clear 1×1 PNG of 68 bytes.
+  expect(pngDims(DOT)).toEqual({ width: 1, height: 1 })
+  expect(atob(DOT).length).toBe(68)
+  expect(probesWithDot({ png: PNG })).toBe(true)
+  // A path costs only the path: the picture itself is asked about.
+  expect(probesWithDot({ file: '/t/a.png', format: 'png' })).toBe(false)
+  expect(sendLine(0, 'tu-1', { mode: 'dot', width: 1, height: 1 }, { png: DOT }, 40, 'probe')).toBe('1970-01-01T00:00:00.000Z tu-1 dot 1x1 68 40 probe')
+})
+
+test('nothing shown with data saver on is enlarged in the background', () => {
+  const plain = { path: '/t/a.png', width: 800, height: 600, title: 'a', generation: 1 }
+  expect(mayWiden(plain)).toBe(true)
+  expect(mayWiden({ ...plain, isSaving: true })).toBe(false)
+  expect(mayWiden({ ...plain, saver: { path: '/t/s.png', width: 400, height: 300, bytes: 9000 } })).toBe(false)
 })
 
 test('no data saver copy when the script fails', async () => {

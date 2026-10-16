@@ -22,6 +22,9 @@ export type Shown = {
   // with data saver on, the small copy sent in place of `path` until the
   // person asks for the full size, and its size on disk
   saver?: { path: string; width: number; height: number; bytes: number }
+  // prepared with data saver on: never enlarged, then or by sharpening, even
+  // when it needed no small copy
+  isSaving?: boolean
   // QA context: the change and its PR
   change?: string
   pr?: string

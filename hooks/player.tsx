@@ -56,6 +56,8 @@ const CONTROLS_MIN = 64
 // background from the original file and swapped into the same object. It
 // stops at twice the picture's own width (an icon stays small) and MAX_STILL.
 const sharpKey = (m: Shown) => `${m.kind}|${m.source ?? m.path}`
+// Never a picture shown with data saver on: its point is fewer bytes.
+export const mayWiden = (m: Shown) => !m.saver && !m.isSaving
 const sharpening = new Map<string, number>()
 const sharpest = new Map<string, Pick<Shown, 'path' | 'width' | 'height' | 'generation'>>()
 function useSharpest(m: Shown) {
@@ -178,7 +180,7 @@ async function picFor($: EngineInterface, file: string, _box: { columns: number;
 // send.log: when, the site, which copy, its pixels and bytes, how long
 // $.ui.blit took ('-' for a render's own send, which isn't timed) and what
 // sent it. A file source crosses as a path ('file'). Kept under a megabyte.
-export function sendLine(at: number, site: string, pick: Pick, src: Source, ms: number | null, via: 'render' | 'blit' | 'probe') {
+export function sendLine(at: number, site: string, pick: { mode: Mode | 'dot'; width: number; height: number }, src: Source, ms: number | null, via: 'render' | 'blit' | 'probe') {
   const dims = 'png' in src ? pngDims(src.png) : null
   const bytes = 'png' in src ? (src.png.length / 4) * 3 - (src.png.match(/=*$/)?.[0].length ?? 0) : 'file'
   return `${new Date(at).toISOString()} ${site} ${pick.mode} ${dims?.width ?? pick.width}x${dims?.height ?? pick.height} ${bytes} ${ms === null ? '-' : Math.round(ms)} ${via}`
@@ -198,23 +200,40 @@ function noteDrawn($: EngineInterface, site: string, key: string, pick: Pick, sr
 
 // After a first draw, asks whether the picture really drew; if the terminal
 // can only show the alt text, every player shows a notice instead.
+// A blit's answer depends on the terminal and on the kind of source (a path
+// or bytes), never on the picture, and a blit that is allowed sends what it
+// was given. So a picture sent as bytes is asked about with a one-cell clear
+// dot of its own (DOT, 68 bytes), drawn beside the title until the answer
+// comes, instead of with the picture again. A path costs only the path: the
+// picture on screen is asked about itself.
+export const DOT = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII='
+export const DOT_KEY = 'probe-dot'
+export const probesWithDot = (src: Source) => 'png' in src
 function probe($: EngineInterface, site: string, key: string, pic: Pic, pick: Pick) {
   if (!state.canImage || state.probed) return
   state.probed = true
+  const isDot = probesWithDot(pic.src)
+  if (isDot) state.dotSite = site
   void $.clock.sleep(250).then(async () => {
-    // A picture swapped in since then is the one on screen: send that one.
-    const shownNow = swaps.get(`${site}|${key}`)?.last
-    const source = shownNow ? await pngSource($, shownNow.file) : pic.src
-    const started = await $.clock.now()
-    const r = await $.ui.blit({ requestId: site, key, source })
-    logSend($, sendLine(started, site, shownNow ?? pick, source, (await $.clock.now()) - started, 'probe'))
-    if (r.deny && /alt/i.test(r.deny)) {
-      state.canImage = false
-      state.drawCause = causeOf(state.inTmux, state.terminalName)
-      $.ui.toast("Pictures can't show here: see the notice in the chat.")
-      redraw($)
+    try {
+      // Asked with the picture itself: one swapped in since then is the one on screen.
+      const shownNow = isDot ? undefined : swaps.get(`${site}|${key}`)?.last
+      const source: Source = isDot ? { png: DOT } : shownNow ? await pngSource($, shownNow.file) : pic.src
+      const started = await $.clock.now()
+      const r = await $.ui.blit({ requestId: site, key: isDot ? DOT_KEY : key, source })
+      logSend($, sendLine(started, site, isDot ? { mode: 'dot', width: 1, height: 1 } : shownNow ?? pick, source, (await $.clock.now()) - started, 'probe'))
+      if (r.deny && /alt/i.test(r.deny)) {
+        state.canImage = false
+        state.drawCause = causeOf(state.inTmux, state.terminalName)
+        $.ui.toast("Pictures can't show here: see the notice in the chat.")
+      }
+    } finally {
+      // The dot goes once answered: a redraw that sends nothing else.
+      if (isDot) state.dotSite = ''
+      if (!state.canImage) redraw($)
+      else if (isDot) redraw($, site)
     }
-  }, () => undefined)
+  }).catch(() => undefined)
 }
 
 // Swaps a site's picture in place, one swap at a time per picture, the newest
@@ -337,11 +356,13 @@ function Picture(ui: Ui, $: EngineInterface, site: string, shown: Shown, media: 
 //   stage     the picture and the buttons under it
 //   Report    what changed, then QA: beside the stage when wide, else under it
 function TitleBar(ui: Ui, $: EngineInterface, site: string, shown: Shown, at: { width?: number; pr?: Ui }) {
-  const { Box, Text } = ui
+  const { Box, Text, Image } = ui
   return (
     <Box key="title-bar" flexDirection="row" justifyContent="space-between" gap={2} width={at.width}>
       <Box flexDirection="row" gap={2} flexShrink={1} flexGrow={1}>
         <Text bold wrap="truncate-end">{shown.title}</Text>
+        {/* The first draw's probe asks with this dot (see probe): clear, one cell, gone once answered. */}
+        {Image && state.dotSite === site && <Image key={DOT_KEY} source={{ png: DOT }} columns={1} rows={1} alt=" " />}
       </Box>
       <Box flexDirection="row" gap={2} flexShrink={0}>
         {at.pr}
@@ -631,9 +652,9 @@ export async function Viewer(
   const isWide = layout.isWide
   const other = shown.compare ? (media === shown ? shown.compare : shown) : null
   // A side short of pixels for its box gets a sharper copy, made in the
-  // background; not one with a data saver copy, whose point is fewer bytes.
-  for (const side of [media, other]) if (side && !side.saver) useSharpest(side)
-  if (state.cell) for (const side of [media, other]) if (side && !side.saver) sharpen($, side, pixelsFor(targetBox(side.width, side.height, layout, state.cell), state.cell, side.width / side.height))
+  // background; never with data saver on (mayWiden).
+  for (const side of [media, other]) if (side && mayWiden(side)) useSharpest(side)
+  if (state.cell) for (const side of [media, other]) if (side && mayWiden(side)) sharpen($, side, pixelsFor(targetBox(side.width, side.height, layout, state.cell), state.cell, side.width / side.height))
   // This side's own box, and the frame it sits in: Original and Updated
   // share the larger of their two boxes, so switching never moves the layout
   // and each side draws whole at its own size, centred.
